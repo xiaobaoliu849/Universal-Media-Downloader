@@ -10,7 +10,7 @@ from pathlib import Path
 #   2. 行格式 KEY=VALUE （忽略 # 开头 / 空行）
 #   3. 若系统已存在同名变量，不覆盖 (尊重外部显式设置)
 #   4. VALUE 去除包裹引号 ' 或 " （简单处理，不做转义展开）
-# 目的: 让用户可在发布目录放置 .env 来配置 LUMINA_PROXY / 端口 / 超时 等。
+# 目的: 让用户可在发布目录放置 .env 来配置 UMD_PROXY / 端口 / 超时 等。
 # ---------------------------------------
 def _load_dotenv():
     candidates = []
@@ -59,7 +59,7 @@ except Exception:
 # 元数据写入默认模式：优先显式 META_MODE，其次旧布尔禁用；未设则 sidecar
 _env_meta_mode = (os.environ.get('META_MODE') or '').strip().lower()
 if not _env_meta_mode:
-    if os.environ.get('LUMINA_DISABLE_META','').lower() in ('1','true','yes'):
+    if os.environ.get('UMD_DISABLE_META','').lower() in ('1','true','yes'):
         _env_meta_mode = 'off'
     else:
         _env_meta_mode = 'sidecar'
@@ -68,7 +68,7 @@ if _env_meta_mode not in ('off','sidecar','folder'):
 DEFAULT_META_MODE = _env_meta_mode  # 供后端诊断或未来接口返回
 
 # FAST_START 标志（供前端或诊断展示，不直接决定逻辑；核心逻辑仍在 tasks.py）
-FAST_START_ENABLED = os.environ.get('LUMINA_FAST_START','').lower() in ('1','true','yes')
+FAST_START_ENABLED = os.environ.get('UMD_FAST_START','').lower() in ('1','true','yes')
 
 # 公开一个简洁汇总函数（可在 /diag 或交互式调试里使用）
 def runtime_summary() -> dict:
@@ -86,7 +86,7 @@ def runtime_summary() -> dict:
 # 桌面/下载目录路径解析改进
 # 目标：避免出现两个“流光视频下载”目录（如 Desktop 与 本地化“桌面” 或 OneDrive 重定向并存）
 # 优先级：环境变量显式指定 > Windows 官方 KnownFolder Desktop > 传统 ~/Desktop > 传统 ~/桌面 > 最后回退到项目根 ./downloads
-# 可通过设置环境变量 LUMINA_DOWNLOAD_DIR 来覆盖。
+# 可通过设置环境变量 UMD_DOWNLOAD_DIR 来覆盖。
 # -------------------------------------------------------------
 
 def _win_known_folder_desktop() -> Path | None:
@@ -151,7 +151,7 @@ def _candidate_desktop_paths() -> list[Path]:
 
 def resolve_download_root(folder_name: str = '流光视频下载') -> Path:
     # 1. 显式环境变量覆盖
-    env_dir = os.environ.get('LUMINA_DOWNLOAD_DIR')
+    env_dir = os.environ.get('UMD_DOWNLOAD_DIR')
     if env_dir:
         return Path(env_dir).expanduser().resolve()
     # 2. 逐个候选桌面路径（优先已有的）
@@ -227,7 +227,7 @@ _DOWNLOAD_PATH = resolve_download_root('流光视频下载')
 DOWNLOAD_DIR = str(_DOWNLOAD_PATH)
 
 # 日志目录
-LOG_DIR = str(_DOWNLOAD_PATH / '流光下载器日志')
+LOG_DIR = str(_DOWNLOAD_PATH / 'Universal Media Downloader日志')
 
 # 检测潜在重复（仅记录，不自动迁移，以免误操作）
 _legacy = detect_legacy_duplicates(_DOWNLOAD_PATH)
@@ -241,12 +241,12 @@ if _legacy:
 
 # --- 网络与服务器设置 ---
 
-# Flask 服务器监听的端口 (默认 5001，可用环境变量 LUMINA_PORT 覆盖)
+# Flask 服务器监听的端口 (默认 5001，可用环境变量 UMD_PORT 覆盖)
 SERVER_PORT = 5001
 
 # 可选全局代理（供 yt-dlp 使用），例如 http://127.0.0.1:7890 。
-# 通过环境变量 LUMINA_PROXY 指定；为空则不加 --proxy 参数。
-PROXY_URL = os.environ.get('LUMINA_PROXY') or ''
+# 通过环境变量 UMD_PROXY 指定；为空则不加 --proxy 参数。
+PROXY_URL = os.environ.get('UMD_PROXY') or ''
 
 # --- 信息探测 / 超时 / 冷却集中配置 ---
 # 可通过环境变量覆盖（若需要更灵活的无代码调参）。

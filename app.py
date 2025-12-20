@@ -588,9 +588,9 @@ def get_video_info(url, is_playlist=False):
     cmd.append(url)
 
     # 添加 Cookies
-    # 遵循环境变量设置：LUMINA_DISABLE_BROWSER_COOKIES / LUMINA_FORCE_BROWSER_COOKIES
-    disable_browser = os.environ.get('LUMINA_DISABLE_BROWSER_COOKIES','').lower() in ('1','true','yes')
-    force_browser = os.environ.get('LUMINA_FORCE_BROWSER_COOKIES','').lower() in ('1','true','yes')
+    # 遵循环境变量设置：UMD_DISABLE_BROWSER_COOKIES / UMD_FORCE_BROWSER_COOKIES
+    disable_browser = os.environ.get('UMD_DISABLE_BROWSER_COOKIES','').lower() in ('1','true','yes')
+    force_browser = os.environ.get('UMD_FORCE_BROWSER_COOKIES','').lower() in ('1','true','yes')
 
     if os.path.exists(config.COOKIES_FILE) and not disable_browser:
         cmd.extend(['--cookies', config.COOKIES_FILE])
@@ -602,7 +602,7 @@ def get_video_info(url, is_playlist=False):
         except Exception as e:
             logger.warning(f"[GET_VIDEO_INFO] 浏览器cookies提取失败: {e}")
     elif disable_browser:
-        logger.info("[GET_VIDEO_INFO] LUMINA_DISABLE_BROWSER_COOKIES=1，跳过浏览器cookies提取")
+        logger.info("[GET_VIDEO_INFO] UMD_DISABLE_BROWSER_COOKIES=1，跳过浏览器cookies提取")
     else:
         logger.info("[GET_VIDEO_INFO] 未找到cookies.txt文件，且未强制使用浏览器cookies")
 
@@ -979,8 +979,8 @@ def diag_ytdlp_version():
 @app.route('/diag/cookie_strategy')
 def diag_cookie_strategy():
     cookies_file_exists = os.path.exists(config.COOKIES_FILE)
-    force = os.environ.get('LUMINA_FORCE_BROWSER_COOKIES','').lower() in ('1','true','yes')
-    disable = os.environ.get('LUMINA_DISABLE_BROWSER_COOKIES','').lower() in ('1','true','yes')
+    force = os.environ.get('UMD_FORCE_BROWSER_COOKIES','').lower() in ('1','true','yes')
+    disable = os.environ.get('UMD_DISABLE_BROWSER_COOKIES','').lower() in ('1','true','yes')
     if cookies_file_exists:
         mode = 'file'
     elif disable:
@@ -1241,10 +1241,10 @@ def api_info():
         import socket, ssl
         result: dict[str, Any] = {'host': host}
         # 读取环境控制参数（允许打包后用户在 .env 配置）
-        _pf_tcp_timeout = float(os.environ.get('LUMINA_TWITTER_PREFLIGHT_TCP_TIMEOUT', '2.5') or '2.5')
+        _pf_tcp_timeout = float(os.environ.get('UMD_TWITTER_PREFLIGHT_TCP_TIMEOUT', '2.5') or '2.5')
         if _pf_tcp_timeout < 0.8:  # 防守：最低 0.8s
             _pf_tcp_timeout = 0.8
-        _pf_ip_limit = int(os.environ.get('LUMINA_TWITTER_PREFLIGHT_IP_LIMIT', '1') or '1')
+        _pf_ip_limit = int(os.environ.get('UMD_TWITTER_PREFLIGHT_IP_LIMIT', '1') or '1')
         if _pf_ip_limit < 1:
             _pf_ip_limit = 1
         elif _pf_ip_limit > 5:
@@ -1316,13 +1316,13 @@ def api_info():
 
     preflight = None
     # lenient: 即使预探测失败也继续；strict: 失败直接 502；默认 strict
-    _pf_mode = os.environ.get('LUMINA_TWITTER_PREFLIGHT_MODE', 'strict').lower().strip() or 'strict'
+    _pf_mode = os.environ.get('UMD_TWITTER_PREFLIGHT_MODE', 'strict').lower().strip() or 'strict'
     if _pf_mode not in ('strict','lenient'):
         _pf_mode = 'strict'
-    preflight_enabled_env = os.environ.get('LUMINA_TWITTER_PREFLIGHT','1').lower() not in ('0','false','no')
+    preflight_enabled_env = os.environ.get('UMD_TWITTER_PREFLIGHT','1').lower() not in ('0','false','no')
     # 新增: 预探测缓存 (减少频繁握手超时) key: host 固定 x.com TTL 可配置, 默认 30s
     _PREFLIGHT_CACHE_KEY = '_twitter_preflight_cache'
-    preflight_cache_ttl = int(os.environ.get('LUMINA_TWITTER_PREFLIGHT_TTL','30') or '30')
+    preflight_cache_ttl = int(os.environ.get('UMD_TWITTER_PREFLIGHT_TTL','30') or '30')
     _now_ts = time.time()
     # 结构: {'ts': float, 'data': {...}}
     _pf_cache = video_info_cache.get(_PREFLIGHT_CACHE_KEY)
@@ -1432,7 +1432,7 @@ def api_info():
             base = [config.YTDLP_PATH, '--skip-download', '--dump-single-json', '--no-warnings', '--no-check-certificate']
             
             # 快速模式配置
-            fast_mode = os.environ.get('LUMINA_FAST_INFO','').lower() in ('1','true','yes')
+            fast_mode = os.environ.get('UMD_FAST_INFO','').lower() in ('1','true','yes')
             if fast_mode:
                 default_timeout = int(os.environ.get('INFO_SOCKET_TIMEOUT', '15'))
                 default_retries = int(os.environ.get('INFO_EXTRACTOR_RETRIES', '2'))
@@ -1508,9 +1508,9 @@ def api_info():
             if geo_bypass:
                 base.append('--geo-bypass')
             # Cookie 策略：优先使用 cookies.txt 文件（如果存在且未被禁用）
-            # 遵循环境变量设置：LUMINA_DISABLE_BROWSER_COOKIES / LUMINA_FORCE_BROWSER_COOKIES
-            disable_browser = os.environ.get('LUMINA_DISABLE_BROWSER_COOKIES','').lower() in ('1','true','yes')
-            force_browser = os.environ.get('LUMINA_FORCE_BROWSER_COOKIES','').lower() in ('1','true','yes')
+            # 遵循环境变量设置：UMD_DISABLE_BROWSER_COOKIES / UMD_FORCE_BROWSER_COOKIES
+            disable_browser = os.environ.get('UMD_DISABLE_BROWSER_COOKIES','').lower() in ('1','true','yes')
+            force_browser = os.environ.get('UMD_FORCE_BROWSER_COOKIES','').lower() in ('1','true','yes')
 
             if os.path.exists(config.COOKIES_FILE) and not disable_browser:
                 base += ['--cookies', config.COOKIES_FILE]
@@ -1528,7 +1528,7 @@ def api_info():
                     except Exception as e:
                         logger.warning(f"[API_INFO] 浏览器cookies提取失败: {e}，继续无cookies")
             elif disable_browser:
-                logger.info("[API_INFO] LUMINA_DISABLE_BROWSER_COOKIES=1，跳过浏览器cookies提取")
+                logger.info("[API_INFO] UMD_DISABLE_BROWSER_COOKIES=1，跳过浏览器cookies提取")
             else:
                 logger.info("[API_INFO] 未找到cookies.txt文件，且未强制使用浏览器cookies")
             base.append(url)
@@ -1584,7 +1584,7 @@ def api_info():
 
         info = None
         # 快速模式：减少阶段数和超时时间
-        fast_mode = os.environ.get('LUMINA_FAST_INFO','').lower() in ('1','true','yes')
+        fast_mode = os.environ.get('UMD_FAST_INFO','').lower() in ('1','true','yes')
         max_stages = int(os.environ.get('INFO_MAX_STAGES', '2' if fast_mode else '5'))
         
         # 智能早期退出：检测到这些错误立即停止后续阶段
@@ -1903,14 +1903,14 @@ def diag_proxy():
     """诊断当前代理可用性与最近的 twitter 预探测。
     返回: proxy_url, head 测试结果 (x.com / youtube), 最近预探测快照。
     """
-    proxy_url = getattr(config, 'PROXY_URL', '') or os.environ.get('LUMINA_PROXY','')
+    proxy_url = getattr(config, 'PROXY_URL', '') or os.environ.get('UMD_PROXY','')
     report: dict[str, Any] = {
         'proxy_url': proxy_url or None,
         'tests': [],
         'last_twitter_preflight': LAST_TWITTER_PREFLIGHT
     }
     if not proxy_url:
-        report['message'] = '未配置代理 (设置 LUMINA_PROXY 环境变量即可)'
+        report['message'] = '未配置代理 (设置 UMD_PROXY 环境变量即可)'
         return jsonify(report)
     try:
         import requests  # type: ignore
@@ -2133,17 +2133,17 @@ def api_last_finished_file():
 
 def open_browser():
     try:
-        port = int(os.environ.get('LUMINA_PORT', getattr(config, 'SERVER_PORT', 33210)))
+        port = int(os.environ.get('UMD_PORT', getattr(config, 'SERVER_PORT', 33210)))
     except Exception:
         port = 33210
     # 支持通过环境变量禁止自动打开浏览器 (批处理/无人值守场景)
-    if os.environ.get('LUMINA_NO_BROWSER','').lower() in ('1','true','yes','on'):  # type: ignore[arg-type]
-        logger.info('[BOOT] 检测到 LUMINA_NO_BROWSER=1, 跳过自动打开浏览器')
+    if os.environ.get('UMD_NO_BROWSER','').lower() in ('1','true','yes','on'):  # type: ignore[arg-type]
+        logger.info('[BOOT] 检测到 UMD_NO_BROWSER=1, 跳过自动打开浏览器')
         return
     webbrowser.open_new(f"http://127.0.0.1:{port}")
 
 if __name__ == '__main__':
-    logger.info("🚀 正在初始化流光下载器...")
+    logger.info("🚀 正在初始化Universal Media Downloader...")
     get_ffmpeg_path()
     # 初始化新任务管理器
     try:
@@ -2161,7 +2161,7 @@ if __name__ == '__main__':
         logger.warning("="*50)
     
     # 从配置模块读取端口
-    port = int(os.environ.get('LUMINA_PORT', config.SERVER_PORT))
+    port = int(os.environ.get('UMD_PORT', config.SERVER_PORT))
     logger.info(f"服务器即将启动在 http://127.0.0.1:{port} (UI_VERSION={UI_VERSION})")
     # 如果代理端口与服务器端口冲突，给出提示
     try:
@@ -2186,7 +2186,7 @@ if __name__ == '__main__':
         response.headers['Expires'] = '0'
         return response
     
-    logger.info("🎬 流光下载器启动成功！")
+    logger.info("🎬 Universal Media Downloader启动成功！")
     # 启动时打印所有路由，帮助诊断 404
     try:
         for rule in app.url_map.iter_rules():
