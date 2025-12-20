@@ -26,7 +26,7 @@ def main():
 
     # --- 1. 定义路径和版本号 ---
     project_root = Path(__file__).parent
-    source_dir = project_root / "dist" / "流光下载器"
+    source_dir = project_root / "dist" / "Universal Media Downloader"
     release_dir = project_root / "release"
 
     now = datetime.datetime.now()
@@ -34,13 +34,13 @@ def main():
     timestamp_tag = now.strftime("%Y%m%d_%H%M%S")
     version = APP_VERSION
     # 旧命名: 带日期 (保留兼容)
-    release_name = f"流光下载器_v{version}_{date_tag}"
+    release_name = f"Universal Media Downloader_v{version}_{date_tag}"
     release_path = release_dir / release_name
     dated_zip_name = f"{release_name}.zip"
     dated_zip_path = release_dir / dated_zip_name
     # 新增稳定/时间戳命名
-    stable_zip_name = f"流光下载器_v{version}_Windows.zip"  # 稳定文件名，方便脚本/用户总是获取最新版
-    ts_zip_name = f"流光下载器_v{version}_Windows_{timestamp_tag}.zip"  # 精确时间戳版本
+    stable_zip_name = f"Universal Media Downloader_v{version}_Windows.zip"  # 稳定文件名，方便脚本/用户总是获取最新版
+    ts_zip_name = f"Universal Media Downloader_v{version}_Windows_{timestamp_tag}.zip"  # 精确时间戳版本
     stable_zip_path = release_dir / stable_zip_name
     ts_zip_path = release_dir / ts_zip_name
 

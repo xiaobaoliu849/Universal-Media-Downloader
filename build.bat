@@ -1,5 +1,5 @@
 @echo off
-echo 开始打包流光下载器...
+echo 开始打包Universal Media Downloader...
 echo.
 
 REM 检查是否安装了 PyInstaller
@@ -20,18 +20,18 @@ echo 正在打包应用程序...
 pyinstaller build_app.spec
 
 REM 检查打包结果
-if exist "dist\流光下载器\流光下载器.exe" (
+if exist "dist\Universal Media Downloader\Universal Media Downloader.exe" (
     echo.
     echo ========================================
     echo 打包成功！
-    echo 可执行文件位置: dist\流光下载器\流光下载器.exe
+    echo 可执行文件位置: dist\Universal Media Downloader\Universal Media Downloader.exe
     echo ========================================
     echo.
     
     REM 询问是否打开文件夹
     set /p choice="是否打开输出文件夹? (y/n): "
     if /i "%choice%"=="y" (
-        start "" "dist\流光下载器"
+        start "" "dist\Universal Media Downloader"
     )
 ) else (
     echo.
