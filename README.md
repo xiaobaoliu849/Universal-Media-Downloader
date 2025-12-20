@@ -1,13 +1,13 @@
-# 🎬 流光下载器 (X/Twitter Video Downloader) — v3.5.1
+# 🎬 Universal Media Downloader (Multi-platform Video Downloader) — v3.5.2
 
-[![下载最新版本](https://img.shields.io/github/v/release/xiaobao-810216/X-video-downloader?label=下载最新版本&color=blue)](https://github.com/xiaobao-810216/X-video-downloader/releases/latest)
-[![GitHub stars](https://img.shields.io/github/stars/xiaobao-810216/X-video-downloader)](https://github.com/xiaobao-810216/X-video-downloader/stargazers)
-[![License](https://img.shields.io/github/license/xiaobao-810216/X-video-downloader)](LICENSE)
+[![下载最新版本](https://img.shields.io/github/v/release/xiaobaoliu849/Universal-Media-Downloader?label=下载最新版本&color=blue)](https://github.com/xiaobaoliu849/Universal-Media-Downloader/releases/latest)
+[![GitHub stars](https://img.shields.io/github/stars/xiaobaoliu849/Universal-Media-Downloader)](https://github.com/xiaobaoliu849/Universal-Media-Downloader/stargazers)
+[![License](https://img.shields.io/github/license/xiaobaoliu849/Universal-Media-Downloader)](LICENSE)
 
-## 🚀 2025-09 稳定增强 (当前版本: v3.5.1)
+## 🚀 2025-09 稳定增强 (当前版本: v3.5.2)
 本次为向后不完全兼容升级，旧的 `/download` 流式端点已废弃 (410)。请所有脚本 / 前端插件 / 自动化集成尽快迁移。
 
-### v3.5.1 变更
+### v3.5.2 变更
 > 小幅增强与默认行为优化（在 v3.5.0 基础上）。
 
 - ⚡ Fast-Start：前端“快速启动”默认勾选（打包版开箱即跳过二次探测）。
@@ -24,14 +24,14 @@
 - 🛡️ 合并失败自动回退：检测 ffmpeg “Invalid data”/“Error opening input files” 时自动切换 mp4 + m4a 保守组合再试。
 - 🎯 分辨率选择记忆：刷新格式后保留用户已选质量，不再强制回到“自动推荐”。
 - 🧠 统一版本号：新增 `version.py (APP_VERSION=3.5.0)`，构建与发布脚本统一引用。
-- 📦 发布包命名：`流光下载器_v3.5.0_YYYYMMDD.zip` 同时包含语义版本+日期。
+- 📦 发布包命名：`Universal Media Downloader_v3.5.0_YYYYMMDD.zip` 同时包含语义版本+日期。
 - 🧾 构建元数据：`build_meta.json` 增加 `version` 字段，方便溯源。
 - 🔁 仍完全兼容 v3.0 SSE/任务/诊断接口。
 
 ### v3.0 基础重构回顾
 - 统一 SSE 接口：`/api/stream_task` 提供增量日志(`type=log`) + 状态快照(`type=status`)；支持取消、字幕-only、quality 动态映射。
 - 任务体系重构：标准字段 (status / stage / progress / file_path / codecs)，支持 `/api/tasks` 快照与 `/api/tasks/<id>/cancel`。
-- Cookies 策略革新：默认不再偷偷尝试浏览器；新增 `LUMINA_FORCE_BROWSER_COOKIES` / `LUMINA_DISABLE_BROWSER_COOKIES`；失败自动回退匿名，不再中止公共视频任务。
+- Cookies 策略革新：默认不再偷偷尝试浏览器；新增 `UMD_FORCE_BROWSER_COOKIES` / `UMD_DISABLE_BROWSER_COOKIES`；失败自动回退匿名，不再中止公共视频任务。
 - 诊断端点：`/diag/cookie_strategy`、`/diag/version`、`/diag/raw_formats`、`/diag/yt` 提升可观测性与故障定位速度。
 - 打包可靠性：修复 `_ctypes` / `libffi` 丢失导致启动失败；子进程窗口隐藏；构建写入 `build_meta.json`（含 commit / build_time）。
 - 质量映射策略：best / best4k / best8k / fast / height<=X 统一服务端解释成 yt-dlp 表达式，前端更简洁。
@@ -43,7 +43,7 @@
 2. SSE 解析逻辑：根据 JSON 的 `type` 分支 (log / status)，更新 UI 进度条与日志窗口。
 3. 取消按钮使用 `POST /api/tasks/<id>/cancel`。
 4. 字幕下载改为 `subtitles_only=true` 参数，无需独立代码路径。
-5. 如果之前依赖浏览器自动 cookies，请显式导出 `cookies.txt` 或设置 `LUMINA_FORCE_BROWSER_COOKIES=1`。
+5. 如果之前依赖浏览器自动 cookies，请显式导出 `cookies.txt` 或设置 `UMD_FORCE_BROWSER_COOKIES=1`。
 6. 打包脚本更新后生成的目录应包含 `build_meta.json`；发布时附上该文件方便溯源。
 7. 验证 `/diag/version` 与 `/diag/cookie_strategy` 正常返回，确保运行环境一致。
 
@@ -53,7 +53,7 @@
 | 项目 | 打包默认 | 源码运行默认 | 覆盖方式 |
 |------|----------|-------------|----------|
 | 元数据 sidecar (`*.meta.json`) | 关闭 (off) | 开启 (sidecar) | 启动前设置 `META_MODE=sidecar` 或 在界面勾选“生成元数据” |
-| 快速启动 (skip_probe fast-path) | 前端复选框预勾选 | 需手动勾选 | 取消勾选或后端强制 `LUMINA_DISABLE_FAST_START=1` (未来可加) |
+| 快速启动 (skip_probe fast-path) | 前端复选框预勾选 | 需手动勾选 | 取消勾选或后端强制 `UMD_DISABLE_FAST_START=1` (未来可加) |
 | 质量默认 | best (限制至 1080p 自适应) | 同 | 选中其它分辨率单选按钮 |
 
 说明：
@@ -63,12 +63,12 @@
 
 覆盖示例（Windows Powershell）：
 ```powershell
-$env:META_MODE="sidecar"; .\流光下载器.exe
+$env:META_MODE="sidecar"; .\Universal Media Downloader.exe
 ```
 
 或仅生成专用目录的元数据：
 ```powershell
-$env:META_MODE="folder"; $env:LUMINA_META_DIR="D:\MetaArchive"; .\流光下载器.exe
+$env:META_MODE="folder"; $env:UMD_META_DIR="D:\MetaArchive"; .\Universal Media Downloader.exe
 ```
 
 ### API 变化摘要
@@ -84,7 +84,7 @@ $env:META_MODE="folder"; $env:LUMINA_META_DIR="D:\MetaArchive"; .\流光下载�
 
 **🚀 一键下载打包版本（推荐）**
 
-[⬇️ 下载 Windows 可执行文件](https://github.com/xiaobao-810216/X-video-downloader/releases/latest) - 无需安装Python，双击即用！
+[⬇️ 下载 Windows 可执行文件](https://github.com/xiaobaoliu849/Universal-Media-Downloader/releases/latest) - 无需安装Python，双击即用！
 
 ## 项目描述
 一个功能强大的视频下载工具，支持多平台视频下载，包括：
@@ -117,7 +117,7 @@ $env:META_MODE="folder"; $env:LUMINA_META_DIR="D:\MetaArchive"; .\流光下载�
 ## 🚀 快速开始
 
 ### 方式一：直接下载可执行文件（推荐）
-1. 前往 [Releases 页面](https://github.com/xiaobao-810216/X-video-downloader/releases/latest)
+1. 前往 [Releases 页面](https://github.com/xiaobaoliu849/Universal-Media-Downloader/releases/latest)
 2. 下载最新的 `.exe` 文件
 3. 双击运行即可使用
 
@@ -130,7 +130,7 @@ $env:META_MODE="folder"; $env:LUMINA_META_DIR="D:\MetaArchive"; .\流光下载�
 
 ### 克隆仓库
 ```bash
-git clone https://github.com/xiaobao-810216/X-video-downloader.git
+git clone https://github.com/xiaobaoliu849/Universal-Media-Downloader.git
 cd X-video-downloader
 ```
 
@@ -170,8 +170,8 @@ python app.py
 
 | 变量 | 值 | 作用 |
 |------|----|------|
-| `LUMINA_FORCE_BROWSER_COOKIES` | 1/true | 在缺少 `cookies.txt` 时强制尝试 `--cookies-from-browser chrome` |
-| `LUMINA_DISABLE_BROWSER_COOKIES` | 1/true | 禁止任何浏览器自动提取（即使设置了 FORCE 也不执行） |
+| `UMD_FORCE_BROWSER_COOKIES` | 1/true | 在缺少 `cookies.txt` 时强制尝试 `--cookies-from-browser chrome` |
+| `UMD_DISABLE_BROWSER_COOKIES` | 1/true | 禁止任何浏览器自动提取（即使设置了 FORCE 也不执行） |
 
 生效优先级：`cookies.txt` > DISABLE > FORCE > none。
 
@@ -292,7 +292,7 @@ curl -N "http://127.0.0.1:5001/api/stream_task?url=...&mode=merged&quality=best"
 - **v1.0** - 初始发布，基础下载功能
 - **v2.0** - 新增字幕下载、播放列表支持、界面美化
 - **v3.0 (2025-09)** - 统一 `/api/stream_task` SSE、废弃 `/download`、新增任务/取消接口、可观测诊断端点、Cookies 策略重写、构建元数据与打包稳定性提升
-- **v3.5.1 (2025-09)** - Fast-Start 默认开启；打包默认关闭 meta；info_cache 解析增强；补充 synthetic timing；META_MODE 模式化
+- **v3.5.2 (2025-09)** - Fast-Start 默认开启；打包默认关闭 meta；info_cache 解析增强；补充 synthetic timing；META_MODE 模式化
 - **v3.5.0 (2025-09)** - 合并失败自动回退；分辨率选择记忆；集中版本号；发布包命名改进；`build_meta.json` 增加 version 字段
 
 ## ⚖️ 许可证
