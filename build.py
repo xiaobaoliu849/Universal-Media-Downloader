@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-流光下载器打包脚本
+Universal Media Downloader打包脚本
 """
 
 import os
@@ -153,7 +153,7 @@ def clean_build():
             return True
         # 若是 Windows 且目录下包含当前仍在运行的 exe，提示用户先关闭
         if sys.platform.startswith('win') and 'dist' in p.as_posix():
-            exe = p / '流光下载器.exe'
+            exe = p / 'Universal Media Downloader.exe'
             if exe.exists():
                 try:
                     # 尝试独占打开
@@ -209,7 +209,7 @@ def build_app(extra_debug=False):
         return False
     
     # 检查输出文件
-    exe_path = Path("dist/流光下载器/流光下载器.exe")
+    exe_path = Path("dist/Universal Media Downloader/Universal Media Downloader.exe")
     if exe_path.exists():
         print(f"\n+ 打包成功！")
         print(f"  输出位置: {exe_path.absolute()}")
@@ -324,7 +324,7 @@ def build_app(extra_debug=False):
         except Exception:
             pass
         try:
-            with open('dist/流光下载器/build_meta.json','w',encoding='utf-8') as mf:
+            with open('dist/Universal Media Downloader/build_meta.json','w',encoding='utf-8') as mf:
                 import json as _json
                 _json.dump(meta, mf, ensure_ascii=False, indent=2)
             print(f"+ 已写入 build_meta.json: {meta}")
@@ -338,7 +338,7 @@ def build_app(extra_debug=False):
 def main():
     """主函数"""
     print("=" * 50)
-    print(f"流光下载器打包工具 (版本 {APP_VERSION})")
+    print(f"Universal Media Downloader打包工具 (版本 {APP_VERSION})")
     print("=" * 50)
     
     # 环境自检 (优先)
@@ -364,11 +364,11 @@ def main():
             choice = input("\n是否打开输出文件夹? (y/n): ").lower()
             if choice == 'y':
                 if sys.platform == "win32":
-                    os.startfile("dist\\流光下载器")
+                    os.startfile("dist\\Universal Media Downloader")
                 elif sys.platform == "darwin":
-                    subprocess.run(["open", "dist/流光下载器"])
+                    subprocess.run(["open", "dist/Universal Media Downloader"])
                 else:
-                    subprocess.run(["xdg-open", "dist/流光下载器"])
+                    subprocess.run(["xdg-open", "dist/Universal Media Downloader"])
         except KeyboardInterrupt:
             pass
         
