@@ -6,6 +6,10 @@ from errors import classify_error
 
 logger = logging.getLogger(__name__)
 
+# -------- 超时/等待配置 (后期可迁移到 config.py) --------
+PROBE_TIMEOUT_DEFAULT = 40  # 秒 (大多数站点)
+PROBE_TIMEOUT_TWITTER = 55  # Twitter/X 更容易慢/重置，给更长时间
+
 # 在 Windows 下隐藏所有子进程控制台窗口，避免打包后的 exe 弹出黑色命令窗
 CREATE_NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
 
@@ -38,7 +42,7 @@ class Task:
     log: List[str] = field(default_factory=list)
     canceled: bool = False
     # 新增：模式/质量/字幕专用
-    mode: str = 'merged'  # merged | video_only | audio_only
+    mode: str = 'merged'  # merged | video_only | audio_only | thumbnail_only
     quality: str = 'best'  # auto|best8k|best4k|best|fast
     subtitles_only: bool = False
     # 新增：媒体元信息（用于前端展示）
@@ -53,6 +57,8 @@ class Task:
     meta_mode: Optional[str] = None
     # 新增：跳过二次 probe（依赖前端传来的 info_cache）
     skip_probe: bool = False
+    # 新增：下载封面图
+    write_thumbnail: bool = False
     info_cache: Optional[dict] = None
     # 内部：虚拟进度标记
     _synthetic_phase: Optional[str] = None
@@ -216,6 +222,10 @@ class TaskManager:
             out_base = os.path.join(self.download_dir, f"{base_template}")
             args = [self.ytdlp_path, '--no-warnings', '--no-check-certificate', '--newline', '--ignore-errors',
                     '--skip-download', '--convert-subs', 'srt', '-o', out_base]
+            # 代理
+            proxy_url = os.environ.get('LUMINA_PROXY') or getattr(__import__('config'),'PROXY_URL','')
+            if proxy_url:
+                args += ['--proxy', proxy_url]
             # 字幕语言
             if task.subtitles:
                 args += ['--write-subs', '--sub-langs', ','.join(task.subtitles)]
@@ -281,6 +291,72 @@ class TaskManager:
                 task.log.append(f'[subtitle] 合并单行失败: {ne}')
             self._update_task(task, status='finished', progress=100.0, stage=None)
             logger.info(f"Task {task.id} 字幕完成: {chosen}")
+            return
+
+        # 封面专用流程（只下载封面，不下载媒体）
+        if getattr(task, 'mode', '') == 'thumbnail_only':
+            out_base = os.path.join(self.download_dir, f"{base_template}.%(ext)s")
+            args = [self.ytdlp_path, '--no-warnings', '--no-check-certificate', '--newline', '--ignore-errors',
+                    '--skip-download', '--write-thumbnail', '--convert-thumbnails', 'jpg', '-o', out_base]
+            # 代理
+            proxy_url = os.environ.get('LUMINA_PROXY') or getattr(__import__('config'),'PROXY_URL','')
+            if proxy_url:
+                args += ['--proxy', proxy_url]
+            if task.geo_bypass:
+                args.append('--geo-bypass')
+            # Cookie 策略
+            force_browser = os.environ.get('LUMINA_FORCE_BROWSER_COOKIES','').lower() in ('1','true','yes')
+            disable_browser = os.environ.get('LUMINA_DISABLE_BROWSER_COOKIES','').lower() in ('1','true','yes')
+            cookies_path = str(self.cookies_file) if self.cookies_file else ''
+            logger.info(f"[THUMBNAIL] cookies路径检查: {cookies_path}, 存在: {os.path.exists(cookies_path) if cookies_path else False}")
+            if cookies_path and os.path.exists(cookies_path):
+                args += ['--cookies', cookies_path]
+                logger.info(f"[THUMBNAIL] 使用cookies.txt文件: {cookies_path}")
+            elif force_browser and not disable_browser:
+                args += ['--cookies-from-browser', 'chrome']
+                logger.info("[THUMBNAIL] 使用浏览器cookies")
+            else:
+                logger.info("[THUMBNAIL] 未使用cookies")
+            ffmpeg_path = self.ffmpeg_locator()
+            if ffmpeg_path:
+                args += ['--ffmpeg-location', ffmpeg_path]
+            args.append(task.url)
+
+            logger.info(f"Task {task.id} 封面下载: {' '.join(args)}")
+            self._update_task(task, status='downloading', stage='thumbnail')
+            proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='ignore', creationflags=CREATE_NO_WINDOW)
+            self.procs[task.id] = proc
+            if proc.stdout is None:
+                task.log.append('[warn] 子进程未提供 stdout')
+            else:
+                for line in iter(proc.stdout.readline, ''):
+                    if task.canceled:
+                        try:
+                            proc.kill()
+                        except Exception:
+                            pass
+                        self._update_task(task, status='canceled', stage=None)
+                        task.log.append('[canceled] 用户已取消任务')
+                        break
+                    line = line.rstrip('\n')
+                    if line:
+                        task.log.append(line)
+            proc.wait()
+            try:
+                self.procs.pop(task.id, None)
+            except Exception:
+                pass
+            if proc.returncode != 0:
+                raise RuntimeError(f"封面下载失败 (exit={proc.returncode})\n最后输出: {task.log[-3:]} ")
+            # 查找生成的封面文件
+            chosen = None
+            for fname in os.listdir(self.download_dir):
+                if fname.startswith(os.path.basename(base_template)) and fname.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
+                    chosen = os.path.join(self.download_dir, fname)
+                    break
+            task.file_path = chosen
+            self._update_task(task, status='finished', progress=100.0, stage=None)
+            logger.info(f"Task {task.id} 封面完成: {chosen}")
             return
 
         # -------- 媒体下载路径与格式选择 (重构部分) --------
@@ -365,6 +441,9 @@ class TaskManager:
                  '--socket-timeout', '15', '--retries', '20', '--fragment-retries', '50', '--retry-sleep', '2',
                  '--force-ipv4', '--concurrent-fragments', str(conc), '--http-chunk-size', chunk,
                  '--hls-prefer-native', '-o', out_path_template]
+            proxy_url = os.environ.get('LUMINA_PROXY') or getattr(__import__('config'),'PROXY_URL','')
+            if proxy_url:
+                a += ['--proxy', proxy_url]
             # 如果用户是 audio_only 且我们想固定 m4a，则提供 merge-output-format；否则保持自适应
             if forced_container and mode == 'audio_only':
                 a += ['--merge-output-format', forced_container]
@@ -385,6 +464,11 @@ class TaskManager:
             ffmpeg_path = self.ffmpeg_locator()
             if ffmpeg_path:
                 a += ['--ffmpeg-location', ffmpeg_path]
+            # 封面图下载
+            if getattr(task, 'write_thumbnail', False):
+                a += ['--write-thumbnail']
+                a += ['--convert-thumbnails', 'jpg']
+            
             if use_aria:
                 a += ['--downloader', 'http:aria2c', '--downloader', 'https:aria2c',
                       '--downloader-args', 'aria2c:-x16 -s16 -k1M -m16 --retry-wait=2 --summary-interval=1']
@@ -699,11 +783,6 @@ class TaskManager:
                         audio_args = [self.ytdlp_path, '-f', 'bestaudio/best', '--no-warnings', '--no-check-certificate', '--newline', '--ignore-errors', '-o', audio_template]
                         if os.path.exists(str(self.cookies_file)):
                             audio_args += ['--cookies', str(self.cookies_file)]
-                        else:
-                            try:
-                                audio_args += ['--cookies-from-browser', 'chrome']
-                            except Exception:
-                                pass
                         if ffmpeg_loc:
                             audio_args += ['--ffmpeg-location', ffmpeg_loc]
                         audio_args.append(task.url)
@@ -943,6 +1022,9 @@ class TaskManager:
 
     def _probe_info(self, task: Task) -> Dict[str, Any]:
         cmd = [self.ytdlp_path, '--skip-download', '--dump-single-json', '--no-warnings', '--no-check-certificate']
+        proxy_url = os.environ.get('LUMINA_PROXY') or getattr(__import__('config'),'PROXY_URL','')
+        if proxy_url:
+            cmd += ['--proxy', proxy_url]
         if task.geo_bypass:
             cmd.append('--geo-bypass')
         cmd.append(task.url)
@@ -969,15 +1051,19 @@ class TaskManager:
             else:
                 logger.info("[PROBE] 未使用 cookies (无 cookies.txt 且未设置 FORCE)")
         
+        # 根据站点类型选择探测超时
+        lower_url = (task.url or '').lower()
+        is_twitter = 'twitter.com' in lower_url or 'x.com' in lower_url
+        timeout_probe = PROBE_TIMEOUT_TWITTER if is_twitter else PROBE_TIMEOUT_DEFAULT
         try:
-            r = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='ignore', timeout=40, creationflags=CREATE_NO_WINDOW)
+            r = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='ignore', timeout=timeout_probe, creationflags=CREATE_NO_WINDOW)
             if r.returncode != 0:
                 err_text = (r.stderr or r.stdout)
                 # 针对 Chrome cookie 数据库复制失败的特殊回退：去掉 '--cookies-from-browser' 重试一次
                 if 'Could not copy Chrome cookie database' in err_text and '--cookies-from-browser' in ' '.join(cmd):
                     logger.warning('[PROBE] 浏览器 cookie 复制失败，回退为无 cookies 再试一次')
                     cmd_no_cookie = [c for c in cmd if c not in ('--cookies-from-browser','chrome')]
-                    r2 = subprocess.run(cmd_no_cookie, capture_output=True, text=True, encoding='utf-8', errors='ignore', timeout=40, creationflags=CREATE_NO_WINDOW)
+                    r2 = subprocess.run(cmd_no_cookie, capture_output=True, text=True, encoding='utf-8', errors='ignore', timeout=timeout_probe, creationflags=CREATE_NO_WINDOW)
                     if r2.returncode != 0:
                         raise RuntimeError(r2.stderr or r2.stdout or err_text)
                     result = json.loads(r2.stdout)

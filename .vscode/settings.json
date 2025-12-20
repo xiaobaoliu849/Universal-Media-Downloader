@@ -10,5 +10,6 @@
   // 若你使用自定义 .env，可在此定义（可选）
   "python.envFile": "${workspaceFolder}/.env",
   // 避免不同平台路径大小写/空格问题建议保持 workspace 根启动
-  "python.terminal.activateEnvironment": true
+  "python.terminal.activateEnvironment": true,
+  "kiroAgent.configureMCP": "Disabled"
 }

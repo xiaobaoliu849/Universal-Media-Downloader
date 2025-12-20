@@ -1,6 +1,24 @@
 import logging, os, sys, subprocess, json, traceback, re, datetime, shutil, uuid, queue, threading, time
 from typing import Optional, Dict, Any, Callable
 from flask import Flask, request, Response, render_template, jsonify
+from typing import Any, Optional as _Optional
+
+# 某些 Pylance 版本下 flask.Request 缺少 get_json/ json 属性的类型提示，添加轻量安全封装
+def _safe_get_json(req) -> dict[str, Any]:  # type: ignore[override]
+    try:
+        gj = getattr(req, 'get_json', None)
+        if callable(gj):  # 优先使用 get_json
+            data = gj(silent=True)  # type: ignore[arg-type]
+            if isinstance(data, dict):
+                return data  # type: ignore[return-value]
+            return {}
+        # 退回直接属性 json
+        raw = getattr(req, 'json', None)
+        if isinstance(raw, dict):
+            return raw
+        return {}
+    except Exception:
+        return {}
 from werkzeug.exceptions import HTTPException, NotFound
 import webbrowser
 from threading import Timer
@@ -126,6 +144,76 @@ class LRUCache:
 
 # 视频信息缓存：最大50个条目，TTL 1小时
 video_info_cache = LRUCache(max_size=50, ttl=3600)
+LAST_TWITTER_PREFLIGHT: dict[str, Any] | None = None  # 记录最近一次 twitter 预探测结果供 /diag/proxy 诊断
+
+# ---------------- In-flight 请求合并 (防止同一 URL 被频繁重复探测) ----------------
+# 现象: 用户或前端在信息获取期间多次点击，日志出现同一 URL 多个连续 primary 阶段进程，造成:
+#   1) 额外的网络/站点压力，可能加剧风控 (特别是 Twitter/X)
+#   2) 本地同时跑多个 yt-dlp 子进程，浪费 CPU/带宽
+# 方案: 维护一个 URL -> Inflight 结构。后续相同 URL 请求等待首个请求完成，或在超时后返回“进行中”。
+# 细节:
+#   * 正向结果仍进入 video_info_cache，等待方收到 result 并标记 coalesced:true
+#   * 若首个请求失败，也广播错误，使等待方即时返回相同错误（并受负面缓存保护）
+#   * 防止首个请求异常中断未释放: 使用 try/finally 置位 event
+#   * 防止长时间卡死: 等待方最多等待 18s (可调)，超过则返回 202 in_progress，前端可稍后再试
+#   * 过期清理: 结果发布后 3 秒清理 inflight 记录，避免内存常驻
+
+class _InfoInflight:
+    __slots__ = ('event','result','error','start','waiters','stage')
+    def __init__(self):
+        import threading as _th, time as _time
+        self.event: 'threading.Event' = _th.Event()  # type: ignore[name-defined]
+        self.result: Optional[dict[str,Any]] = None
+        self.error: Optional[dict[str,Any]] = None
+        self.start: float = _time.time()
+        self.waiters: int = 0
+        self.stage: str = 'initial'
+
+_INFO_INFLIGHT: dict[str,_InfoInflight] = {}
+_INFO_INFLIGHT_LOCK = threading.Lock()
+
+def _get_inflight(url: str) -> Optional[_InfoInflight]:
+    with _INFO_INFLIGHT_LOCK:
+        return _INFO_INFLIGHT.get(url)
+
+def _create_inflight(url: str) -> _InfoInflight:
+    with _INFO_INFLIGHT_LOCK:
+        inf = _INFO_INFLIGHT.get(url)
+        if inf:
+            return inf
+        inf = _InfoInflight()
+        _INFO_INFLIGHT[url] = inf
+        return inf
+
+def _publish_and_cleanup_inflight(url: str, inf: _InfoInflight):
+    # 发布结果给等待者并安排清理
+    try:
+        inf.event.set()
+    finally:
+        def _cleanup():
+            with _INFO_INFLIGHT_LOCK:
+                # 仅在该对象仍是当前条目的情况下移除
+                cur = _INFO_INFLIGHT.get(url)
+                if cur is inf:
+                    _INFO_INFLIGHT.pop(url, None)
+        try:
+            Timer(3, _cleanup).start()
+        except Exception:
+            _cleanup()
+
+
+def _force_cleanup_inflight(url: str, inf: _InfoInflight, error_payload: Optional[dict[str, Any]] = None):
+    """强制结束一个 inflight 记录，用于探测进程异常卡死时清理。"""
+    if error_payload:
+        try:
+            inf.error = dict(error_payload)
+        except Exception:
+            pass
+    _publish_and_cleanup_inflight(url, inf)
+    with _INFO_INFLIGHT_LOCK:
+        cur = _INFO_INFLIGHT.get(url)
+        if cur is inf:
+            _INFO_INFLIGHT.pop(url, None)
 
 def retry_on_failure(max_retries: int = 3, backoff_factor: float = 2.0, exceptions: tuple = (Exception,)):
     """指数退避重试装饰器"""
@@ -390,8 +478,7 @@ def _ensure_task_manager_initialized():
         except Exception as _e:
             logger.error(f"[INIT] TaskManager 初始化异常: {_e}")
 
-# 1) 导入阶段先尝试一次（适用于 run.py 方式）
-_ensure_task_manager_initialized()
+# 1) 导入阶段不再强制初始化，避免未定义顺序异常；改为懒加载 + 启动阶段显式初始化。
 
 # 2) 作为兜底，在每次请求前检查一次（成本极低）
 @app.before_request  # type: ignore[attr-defined]
@@ -422,6 +509,8 @@ def _extract_root_cause(msg: str) -> str:
         return "未知错误"
     # 常见可读性提升
     lower = msg.lower()
+    if 'could not copy' in lower and 'cookie database' in lower:
+        return '无法复制浏览器 cookies。请完全关闭所有浏览器窗口（Chrome/Edge 等）后再重试。'
     # 分类模式
     if any(x in lower for x in ['sign in to confirm', 'not a bot', 'consent required']):
         return '需要登录验证（YouTube 验证/风控），请更新 cookies.txt'
@@ -499,13 +588,23 @@ def get_video_info(url, is_playlist=False):
     cmd.append(url)
 
     # 添加 Cookies
-    if os.path.exists(config.COOKIES_FILE):
+    # 遵循环境变量设置：LUMINA_DISABLE_BROWSER_COOKIES / LUMINA_FORCE_BROWSER_COOKIES
+    disable_browser = os.environ.get('LUMINA_DISABLE_BROWSER_COOKIES','').lower() in ('1','true','yes')
+    force_browser = os.environ.get('LUMINA_FORCE_BROWSER_COOKIES','').lower() in ('1','true','yes')
+
+    if os.path.exists(config.COOKIES_FILE) and not disable_browser:
         cmd.extend(['--cookies', config.COOKIES_FILE])
-    else:
+        logger.info(f"[GET_VIDEO_INFO] 使用cookies.txt文件: {config.COOKIES_FILE}")
+    elif force_browser and not disable_browser:
         try:
             cmd.extend(['--cookies-from-browser', 'chrome'])
-        except Exception:
-            logger.warning("无法从浏览器自动提取 cookies")
+            logger.info("[GET_VIDEO_INFO] FORCE_BROWSER_COOKIES=1，尝试Chrome浏览器cookies")
+        except Exception as e:
+            logger.warning(f"[GET_VIDEO_INFO] 浏览器cookies提取失败: {e}")
+    elif disable_browser:
+        logger.info("[GET_VIDEO_INFO] LUMINA_DISABLE_BROWSER_COOKIES=1，跳过浏览器cookies提取")
+    else:
+        logger.info("[GET_VIDEO_INFO] 未找到cookies.txt文件，且未强制使用浏览器cookies")
 
     try:
         process = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8',
@@ -639,8 +738,9 @@ def add_to_queue():
     if not tm:
         return jsonify({'error': '任务系统未初始化'}), 500
 
-    data = request.json
-    if not isinstance(data, dict):
+    # 使用 get_json 代替直接访问 request.json (对类型检查 & 容错更友好)
+    data = _safe_get_json(request)
+    if not isinstance(data, dict):  # 再次防御
         data = {}
     videos = data.get('videos', [])  # type: ignore[assignment]
     quality = data.get('quality', 'best')  # type: ignore[assignment]
@@ -963,6 +1063,9 @@ def api_stream_task():
         elif mp in ('folder','dir','directory'):
             meta_mode = 'folder'
         # 其它值忽略，继续使用环境策略
+    
+    # 新增：封面图下载
+    write_thumbnail = request.args.get('thumbnail', '0').lower() in ('1', 'true', 'yes')
 
     if not url:
         return Response('data: {"error":"缺少 url"}\n\n', mimetype='text/event-stream')
@@ -1008,10 +1111,14 @@ def api_stream_task():
     task = tm.add_task(url=url, mode=mode, quality=quality, subtitles_only=subtitles_only,
                        subtitles=subtitles.split(',') if subtitles else [],
                        video_format=video_format, audio_format=audio_format,
-                       meta_mode=meta_mode, skip_probe=skip_probe, info_cache=info_cache)
+                       meta_mode=meta_mode, skip_probe=skip_probe, info_cache=info_cache,
+                       write_thumbnail=write_thumbnail)
 
     def event_stream():
         last_offset = 0
+        logger.info(f"[API_STREAM_TASK] SSE 开始推送 task_id={task.id}")
+        first_progress_logged = False
+        client_disconnected = False
         yield f'data: {{"task_id":"{task.id}","status":"queued"}}\n\n'
         # 轮询任务日志
         while True:
@@ -1024,11 +1131,10 @@ def api_stream_task():
                 if len(current.log) > last_offset:
                     new_slice = current.log[last_offset:]
                     for line in new_slice:
-                        # 尝试提取进度（Task 对象 progress 字段更直接）
-                        yield 'data: '+ json.dumps({
-                            'type':'log',
-                            'line': line[-800:]
-                        }, ensure_ascii=False) + '\n\n'
+                        if (not first_progress_logged) and ('[timing] time_to_first_progress=' in line or 'download' in line.lower()):
+                            first_progress_logged = True
+                            logger.info(f"[API_STREAM_TASK] 首次进度日志出现 task_id={task.id}")
+                        yield 'data: '+ json.dumps({'type':'log','line': line[-800:]}, ensure_ascii=False) + '\n\n'
                     last_offset = len(current.log)
                 # 输出状态快照
                 payload = {
@@ -1047,13 +1153,17 @@ def api_stream_task():
                 if current.status in ('finished','error','canceled'):
                     break
             except GeneratorExit:
+                client_disconnected = True
+                logger.info(f"[API_STREAM_TASK] 客户端断开 task_id={task.id}")
                 break
             except Exception as e:
                 logger.error(f"[stream_task] SSE 循环异常: {e}")
                 yield 'data: {"error":"内部异常"}\n\n'
                 break
             time.sleep(1.0)
-        yield 'data: {"event":"end"}\n\n'
+        # 只有在非客户端主动断开时才发送结束事件，避免 GeneratorExit 后继续 yield 触发 RuntimeError
+        if not client_disconnected:
+            yield 'data: {"event":"end"}\n\n'
     return Response(event_stream(), mimetype='text/event-stream')
 
 @app.route('/ping')
@@ -1063,7 +1173,7 @@ def ping():
 # ---------------- 新 API: /api/info 结构化格式列表 ----------------
 @app.route('/api/info', methods=['POST'])
 def api_info():
-    data = request.get_json(silent=True) or {}
+    data = _safe_get_json(request)
     url = (data.get('url') or '').strip()
     geo_bypass = bool(data.get('geo_bypass'))
     if not url:
@@ -1075,58 +1185,382 @@ def api_info():
 
     logger.info(f"[api_info] url={url}")
 
+    # -------- In-flight 合并: 若已有相同 URL 正在探测，进入等待 --------
+    existing_inflight = _get_inflight(url)
+    stale_limit = float(getattr(config, 'INFO_INFLIGHT_STALE_SEC', 0) or 0)
+    if existing_inflight and stale_limit > 0:
+        age = time.time() - existing_inflight.start
+        if age > stale_limit:
+            logger.warning(f"[api_info] 发现陈旧探测 (stage={existing_inflight.stage}, age={age:.1f}s) -> 强制重启 url={url}")
+            _force_cleanup_inflight(url, existing_inflight, {
+                'error': '上一次信息探测耗时过长，已自动重启',
+                'error_code': 'info_probe_stale',
+                'stale': True,
+                'stage': existing_inflight.stage,
+                'age_seconds': round(age, 1),
+                '_status': 504
+            })
+            existing_inflight = None
+    if existing_inflight:
+        existing_inflight.waiters += 1
+        # 动态等待：Twitter/X 给更长窗口以避免大量 202 (primary+hardened 可能就 >18s)
+        site_wait_default = getattr(config, 'INFO_MAX_WAIT_DEFAULT', 18.0)
+        site_wait_twitter = getattr(config, 'INFO_MAX_WAIT_TWITTER', 40.0)
+        dynamic_wait = site_wait_twitter if ('twitter.com' in url.lower() or 'x.com' in url.lower()) else site_wait_default
+        max_wait = float(data.get('max_wait', dynamic_wait))
+        logger.info(f"[api_info] 发现进行中的探测, waiters={existing_inflight.waiters} stage={existing_inflight.stage} 等待最多 {max_wait}s url={url}")
+        finished = existing_inflight.event.wait(timeout=max_wait)
+        if finished:
+            # 复用首个请求的结果或错误
+            if existing_inflight.result is not None:
+                payload = dict(existing_inflight.result)
+                payload['coalesced'] = True
+                return jsonify(payload)
+            if existing_inflight.error is not None:
+                err_payload = dict(existing_inflight.error)
+                err_payload['coalesced'] = True
+                status = err_payload.pop('_status', 502)
+                return jsonify(err_payload), status
+            # 边界: 设置了 event 但无结果 (异常路径) -> 作为未知失败
+            return jsonify({'error':'未知错误(合并路径)','error_code':'inflight_unknown','coalesced':True}), 500
+        else:
+            # 超时仍未完成: 返回进行中提示 (202 Accepted)，附带当前阶段
+            remain = max(1, int(max_wait))
+            return jsonify({'in_progress': True, 'message': '信息获取仍在进行, 稍后重试', 'url': url, 'suggest_retry_sec': remain, 'current_stage': existing_inflight.stage}), 202
+
+    # 创建新的 inflight 记录 (首个请求)
+    inflight = _create_inflight(url)
+
     # 检测网站类型，采用不同的策略
     is_adult_site = any(domain in url.lower() for domain in ['pornhub.com', 'xvideos.com', 'xnxx.com', 'youporn.com'])
     is_twitter = 'twitter.com' in url.lower() or 'x.com' in url.lower()
     is_youtube = 'youtube.com' in url.lower() or 'youtu.be' in url.lower()
 
+    # -------- Twitter/X 预探测 (preflight) --------
+    def _twitter_preflight(host: str = 'x.com') -> dict[str, Any]:
+        import socket, ssl
+        result: dict[str, Any] = {'host': host}
+        # 读取环境控制参数（允许打包后用户在 .env 配置）
+        _pf_tcp_timeout = float(os.environ.get('LUMINA_TWITTER_PREFLIGHT_TCP_TIMEOUT', '2.5') or '2.5')
+        if _pf_tcp_timeout < 0.8:  # 防守：最低 0.8s
+            _pf_tcp_timeout = 0.8
+        _pf_ip_limit = int(os.environ.get('LUMINA_TWITTER_PREFLIGHT_IP_LIMIT', '1') or '1')
+        if _pf_ip_limit < 1:
+            _pf_ip_limit = 1
+        elif _pf_ip_limit > 5:
+            _pf_ip_limit = 5  # 防止过度探测
+        try:
+            t0 = time.time()
+            addrs = socket.getaddrinfo(host, 443)
+            result['dns_ms'] = int((time.time() - t0) * 1000)
+            v4: list[str] = []
+            v6: list[str] = []
+            for a in addrs:
+                try:
+                    ip_raw = a[4][0]
+                    ip = str(ip_raw)
+                    if ':' in ip:
+                        if ip not in v6:
+                            v6.append(ip)
+                    else:
+                        if ip not in v4:
+                            v4.append(ip)
+                except Exception:
+                    continue
+            if v4:
+                result['ipv4'] = v4[:3]
+            if v6:
+                result['ipv6'] = v6[:3]
+        except Exception as e:
+            result['dns_error'] = str(e)
+            return result
+
+        def _try(ip: str):
+            rec: dict[str, Any] = {'ip': ip}
+            s = None
+            try:
+                family = socket.AF_INET6 if ':' in ip else socket.AF_INET
+                s = socket.socket(family, socket.SOCK_STREAM)
+                s.settimeout(_pf_tcp_timeout)
+                t1 = time.time()
+                s.connect((ip, 443))
+                rec['tcp_ms'] = int((time.time() - t1) * 1000)
+                ctx = ssl.create_default_context()
+                t2 = time.time()
+                ss = ctx.wrap_socket(s, server_hostname=host)
+                try:
+                    ss.do_handshake()
+                    rec['tls_ms'] = int((time.time() - t2) * 1000)
+                finally:
+                    try:
+                        ss.close()
+                    except Exception:
+                        pass
+            except Exception as ex:
+                rec['error'] = str(ex)[:160]
+            finally:
+                try:
+                    if s:
+                        s.close()
+                except Exception:
+                    pass
+            return rec
+
+        for ip in result.get('ipv4', [])[:_pf_ip_limit]:
+            result.setdefault('probes', []).append(_try(ip))
+        for ip in result.get('ipv6', [])[:max(1, min(1, _pf_ip_limit))]:  # IPv6 保守一个
+            result.setdefault('probes', []).append(_try(ip))
+        result['tcp_timeout_sec'] = _pf_tcp_timeout
+        result['ip_limit'] = _pf_ip_limit
+        return result
+
+    preflight = None
+    # lenient: 即使预探测失败也继续；strict: 失败直接 502；默认 strict
+    _pf_mode = os.environ.get('LUMINA_TWITTER_PREFLIGHT_MODE', 'strict').lower().strip() or 'strict'
+    if _pf_mode not in ('strict','lenient'):
+        _pf_mode = 'strict'
+    preflight_enabled_env = os.environ.get('LUMINA_TWITTER_PREFLIGHT','1').lower() not in ('0','false','no')
+    # 新增: 预探测缓存 (减少频繁握手超时) key: host 固定 x.com TTL 可配置, 默认 30s
+    _PREFLIGHT_CACHE_KEY = '_twitter_preflight_cache'
+    preflight_cache_ttl = int(os.environ.get('LUMINA_TWITTER_PREFLIGHT_TTL','30') or '30')
+    _now_ts = time.time()
+    # 结构: {'ts': float, 'data': {...}}
+    _pf_cache = video_info_cache.get(_PREFLIGHT_CACHE_KEY)
+    if is_twitter and data.get('preflight', True) and preflight_enabled_env:
+        try:
+            proxy_url = getattr(config, 'PROXY_URL', '')
+            # 若未配置代理且检测到常见本地端口 33210 正在监听，可尝试自动推断 (仅一次)
+            if not proxy_url:
+                try:
+                    import socket as _sk
+                    _auto_sock = _sk.socket(_sk.AF_INET, _sk.SOCK_STREAM)
+                    _auto_sock.settimeout(0.25)
+                    if _auto_sock.connect_ex(('127.0.0.1', 33210)) == 0:
+                        proxy_url = 'http://127.0.0.1:33210'
+                        if preflight is None:
+                            preflight = {'auto_proxy': proxy_url}
+                        else:
+                            preflight['auto_proxy'] = proxy_url
+                    _auto_sock.close()
+                except Exception:
+                    pass
+            # 命中缓存直接复用
+            if _pf_cache and (_now_ts - _pf_cache.get('ts',0) < preflight_cache_ttl):
+                preflight = dict(_pf_cache.get('data') or {})
+                preflight['cache_hit'] = True
+            else:
+                preflight = _twitter_preflight('x.com')
+            probe_list = preflight.get('probes') or []
+            direct_all_failed = preflight.get('dns_error') or (probe_list and all('error' in p for p in probe_list))
+            proxy_pass = False
+            # 如果配置了代理，再做一次代理 HEAD 检测 (requests)，若代理成功则放行
+            if proxy_url:
+                try:
+                    import requests  # type: ignore
+                    test_url = 'https://x.com/robots.txt'
+                    rp = requests.head(test_url, timeout=6, proxies={'http': proxy_url, 'https': proxy_url}, allow_redirects=True)
+                    preflight['proxy_status_code'] = rp.status_code
+                    proxy_pass = rp.status_code in (200,301,302,400,401,403,404)
+                except Exception as rex:
+                    preflight['proxy_error'] = str(rex)[:160]
+            # 记录最近一次预探测
+            try:
+                global LAST_TWITTER_PREFLIGHT
+                LAST_TWITTER_PREFLIGHT = dict(preflight)
+                LAST_TWITTER_PREFLIGHT['timestamp'] = datetime.datetime.utcnow().isoformat() + 'Z'
+                # 写入缓存 (仅非 cache_hit 情况, 或更新为最新)
+                video_info_cache.set(_PREFLIGHT_CACHE_KEY, {'ts': _now_ts, 'data': preflight})
+            except Exception:
+                pass
+            if direct_all_failed and not proxy_pass:
+                if _pf_mode == 'strict':
+                    logger.warning(f"[api_info] twitter 预探测失败(直连+代理都不通) mode=strict url={url} preflight={preflight}")
+                    inflight.error = {'error': 'Twitter 网络不可达(预探测失败)', 'error_code': 'twitter_network_block', 'preflight': preflight, '_status': 502}
+                    _publish_and_cleanup_inflight(url, inflight)
+                    return jsonify({'error': 'Twitter 网络不可达(预探测失败)', 'error_code': 'twitter_network_block', 'preflight': preflight}), 502
+                else:
+                    # lenient: 记录警告但继续后续阶段，让 yt-dlp 亲自尝试；附带 degrade 标记
+                    preflight['degraded'] = True
+                    logger.warning(f"[api_info] twitter 预探测失败但 lenient 放行 url={url} preflight={preflight}")
+            else:
+                logger.info(f"[api_info] twitter 预探测放行 mode={_pf_mode} direct_failed={bool(direct_all_failed)} proxy_pass={proxy_pass} preflight={preflight}")
+        except Exception as _pf_err:
+            logger.warning(f"[api_info] twitter 预探测异常(忽略继续): {_pf_err}")
+
     # ---------- 新增: 统一多阶段探测 + 缓存 ----------
     cache_key = f"api_info::{url}"
+    # Negative failure cache (避免短时间内重复打同一失败 URL 导致风控加重)
+    neg_cache_key = f"api_info_fail::{url}"
+    neg_rec = video_info_cache.get(neg_cache_key)
+    if neg_rec:
+        # 结构: {'last_err': str, 'ts': float, 'count': int}
+        now_ts = time.time()
+        # 升级冷却：失败次数超过阈值采用更长冷却
+        base_cd = getattr(config, 'INFO_NEG_COOLDOWN_BASE', 180)
+        escalated_cd = getattr(config, 'INFO_NEG_COOLDOWN_ESCALATED', 420)
+        escalate_threshold = getattr(config, 'INFO_NEG_ESCALATE_THRESHOLD', 3)
+        fails = neg_rec.get('count', 1)
+        cooldown = escalated_cd if fails >= escalate_threshold else base_cd
+        if now_ts - neg_rec.get('ts', 0) < cooldown:
+            logger.info(f"[api_info] 负面缓存命中 (剩余 {int(cooldown-(now_ts-neg_rec.get('ts',0)))}s) url={url}")
+            remain = int(cooldown-(now_ts-neg_rec.get('ts',0)))
+            resp_payload = {
+                'error': neg_rec.get('last_err') or '最近多次失败, 稍后再试',
+                'error_code': 'recent_fail',
+                'cooldown_remain': remain,
+                'retry_after_seconds': remain,
+                'fail_count': neg_rec.get('count', 1),
+                'cooldown_escalated': True if fails >= escalate_threshold else False,
+                'site_type': 'twitter' if ('twitter.com' in url.lower() or 'x.com' in url.lower()) else 'general'
+            }
+            r = jsonify(resp_payload)
+            try:
+                r.headers['Retry-After'] = str(remain)
+            except Exception:
+                pass
+            return r, 429
     cached = video_info_cache.get(cache_key)
     if cached:
         logger.info("[api_info] 命中缓存结果")
         info = cached
+        inflight.result = {'cached': True}  # 仅占位，稍后补充完整 payload
+        _publish_and_cleanup_inflight(url, inflight)
     else:
         attempts: list[dict[str,Any]] = []
 
-        def build_cmd(primary: bool, force_no_playlist: bool=False, hardened: bool=False):
+        def build_cmd(primary: bool, force_no_playlist: bool=False, hardened: bool=False, extended: bool=False, ip_family: str|None=None):
             base = [config.YTDLP_PATH, '--skip-download', '--dump-single-json', '--no-warnings', '--no-check-certificate']
+            
+            # 快速模式配置
+            fast_mode = os.environ.get('LUMINA_FAST_INFO','').lower() in ('1','true','yes')
+            if fast_mode:
+                default_timeout = int(os.environ.get('INFO_SOCKET_TIMEOUT', '15'))
+                default_retries = int(os.environ.get('INFO_EXTRACTOR_RETRIES', '2'))
+                default_retry_sleep = int(os.environ.get('INFO_RETRY_SLEEP', '1'))
+            else:
+                default_timeout = 30
+                default_retries = 5
+                default_retry_sleep = 3
+            
             # 通用/站点差异
             if is_adult_site:
-                base += ['--no-playlist','--socket-timeout','30','--extractor-retries','5','--http-chunk-size','1M','--force-ipv4',
+                timeout = default_timeout if fast_mode else 30
+                retries = default_retries if fast_mode else 5
+                base += ['--no-playlist','--socket-timeout',str(timeout),'--extractor-retries',str(retries),'--http-chunk-size','1M','--force-ipv4',
                          '--user-agent','Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                          '--sleep-interval','2','--max-sleep-interval','5','--referer','https://www.google.com/',
                          '--add-header','Accept-Language:en-US,en;q=0.9']
                 if primary:
                     logger.info('[api_info] 成人站初次命令构建')
             elif is_twitter:
-                base += ['--no-playlist','--socket-timeout','20','--extractor-retries','3','--user-agent','Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36']
+                # Twitter/X 延长超时, 强化 UA 与 header (extended 阶段再追加更多)
+                timeout = default_timeout + 5 if fast_mode else 40
+                retries = default_retries if fast_mode else 4
+                base += ['--no-playlist','--socket-timeout',str(timeout),'--extractor-retries',str(retries),
+                         '--user-agent','Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:131.0) Gecko/20100101 Firefox/131.0',
+                         '--add-header','Referer:https://x.com/','--add-header','Accept-Language:en-US,en;q=0.9']
+                if extended:
+                    base += ['--socket-timeout','55','--extractor-retries','6',
+                             '--add-header','Accept:*/*','--add-header','Origin:https://x.com']
             elif is_youtube:
                 # 初次对 YouTube 单视频优先添加 --no-playlist (如 URL 带 list= 则后续 fallback 去掉)
                 if force_no_playlist or primary:
                     base += ['--no-playlist']
-                base += ['--socket-timeout','15','--extractor-retries','3']
+                timeout = default_timeout
+                retries = default_retries
+                retry_sleep = default_retry_sleep
+                fragment_retries = 5 if fast_mode else 10
+                base += ['--socket-timeout',str(timeout),'--extractor-retries',str(retries),'--retry-sleep',str(retry_sleep),'--fragment-retries',str(fragment_retries)]
+                # 增强反爬措施
+                base += ['--user-agent','Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36']
+                base += ['--add-header','Accept-Language:en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7']
+                base += ['--add-header','Referer:https://www.youtube.com/']
+                if extended:
+                    # extended 阶段更强的反爬措施
+                    ext_timeout = default_timeout + 10 if fast_mode else 60
+                    ext_retries = default_retries + 2 if fast_mode else 8
+                    ext_retry_sleep = default_retry_sleep + 1 if fast_mode else 5
+                    ext_fragment_retries = 8 if fast_mode else 15
+                    base += ['--socket-timeout',str(ext_timeout),'--extractor-retries',str(ext_retries),'--retry-sleep',str(ext_retry_sleep),'--fragment-retries',str(ext_fragment_retries)]
+                    base += ['--user-agent','Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0']
+                    base += ['--add-header','Accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7']
+                    base += ['--add-header','Accept-Encoding:gzip, deflate, br']
+                    base += ['--add-header','Cache-Control:max-age=0']
+                    base += ['--add-header','DNT:1']
+                    base += ['--add-header','Origin:https://www.youtube.com']
+                    base += ['--sleep-interval','3','--max-sleep-interval','7']
             else:
                 base += ['--no-playlist','--socket-timeout','15','--extractor-retries','3']
             if hardened:
-                base += ['--ignore-errors','--force-ipv4','--retry-sleep','2','--fragment-retries','10']
+                base += ['--ignore-errors','--retry-sleep','2','--fragment-retries','10']
+            # IP 家族策略: 默认不强制；可按阶段注入 --force-ipv4 / --force-ipv6
+            if ip_family == 'v4':
+                base += ['--force-ipv4']
+            elif ip_family == 'v6':
+                base += ['--force-ipv6']
+            # 代理支持: 如果配置了 PROXY_URL
+            try:
+                proxy_url = getattr(config, 'PROXY_URL', '')
+                if proxy_url:
+                    base += ['--proxy', proxy_url]
+            except Exception:
+                pass
             if geo_bypass:
                 base.append('--geo-bypass')
-            if os.path.exists(config.COOKIES_FILE):
+            # Cookie 策略：优先使用 cookies.txt 文件（如果存在且未被禁用）
+            # 遵循环境变量设置：LUMINA_DISABLE_BROWSER_COOKIES / LUMINA_FORCE_BROWSER_COOKIES
+            disable_browser = os.environ.get('LUMINA_DISABLE_BROWSER_COOKIES','').lower() in ('1','true','yes')
+            force_browser = os.environ.get('LUMINA_FORCE_BROWSER_COOKIES','').lower() in ('1','true','yes')
+
+            if os.path.exists(config.COOKIES_FILE) and not disable_browser:
                 base += ['--cookies', config.COOKIES_FILE]
+                logger.info(f"[API_INFO] 使用cookies.txt文件: {config.COOKIES_FILE}")
+            elif force_browser and not disable_browser:
+                try:
+                    # 尝试从 Chrome 获取 cookies
+                    base += ['--cookies-from-browser', 'chrome']
+                    logger.info("[API_INFO] FORCE_BROWSER_COOKIES=1，尝试Chrome浏览器cookies")
+                except Exception:
+                    try:
+                        # 回退到 Edge
+                        base += ['--cookies-from-browser', 'edge']
+                        logger.info("[API_INFO] 尝试Edge浏览器cookies")
+                    except Exception as e:
+                        logger.warning(f"[API_INFO] 浏览器cookies提取失败: {e}，继续无cookies")
+            elif disable_browser:
+                logger.info("[API_INFO] LUMINA_DISABLE_BROWSER_COOKIES=1，跳过浏览器cookies提取")
+            else:
+                logger.info("[API_INFO] 未找到cookies.txt文件，且未强制使用浏览器cookies")
             base.append(url)
             return base
 
-        def run_once(tag: str, cmd: list[str], timeout_s: int):
+        def run_once(tag: str, cmd: list[str], timeout_s: int, ip_family: str|None=None):
             logger.info(f"[api_info] 运行阶段 {tag}: {' '.join(cmd)}")
             start = time.time()
             try:
                 proc = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='ignore', timeout=timeout_s, creationflags=CREATE_NO_WINDOW)
                 duration = round(time.time()-start,2)
                 attempt_rec = {'stage': tag, 'returncode': proc.returncode, 'time': duration}
+                if ip_family:
+                    attempt_rec['ip_family'] = ip_family
                 if proc.returncode != 0:
                     stderr_msg = (proc.stderr or '').strip() or proc.stdout[:400]
                     attempt_rec['stderr_head'] = stderr_msg[:220]
+                    # 分类错误类别
+                    cat = 'unknown'
+                    sm = stderr_msg.lower() if stderr_msg else ''
+                    if 'timed out' in sm or 'timeout' in sm:
+                        cat = 'timeout'
+                    elif 'connectionreset' in sm or '10054' in sm or 'reset' in sm or ('connection aborted' in sm and 'filenotfounderror' in sm):
+                        cat = 'connection_reset'
+                    elif '403' in sm or 'forbidden' in sm:
+                        cat = 'forbidden'
+                    elif '429' in sm or 'too many' in sm or 'rate' in sm:
+                        cat = 'rate_limited'
+                    attempt_rec['category'] = cat
+                    # 新增: 失败阶段额外日志记录首段错误信息，便于问题诊断
+                    if stderr_msg:
+                        logger.warning(f"[api_info] 阶段 {tag} 失败 rc={proc.returncode} 错误前缀: {stderr_msg[:180]}")
                 else:
                     attempt_rec['stdout_len'] = len(proc.stdout)
                 attempts.append(attempt_rec)
@@ -1136,31 +1570,115 @@ def api_info():
                         return data_obj
                     except Exception as je:
                         attempt_rec['parse_error'] = str(je)
+                        logger.warning(f"[api_info] 阶段 {tag} JSON 解析失败: {je}")
                         return None
                 return None
             except subprocess.TimeoutExpired:
                 attempts.append({'stage': tag, 'timeout': True})
+                logger.warning(f"[api_info] 阶段 {tag} 超时 (>{timeout_s}s)")
                 return None
             except Exception as ex:
                 attempts.append({'stage': tag, 'exception': str(ex)})
+                logger.warning(f"[api_info] 阶段 {tag} 发生异常: {ex}")
                 return None
 
         info = None
-        # Stage 1: Primary (YouTube 单视频优先 --no-playlist)
-        info = run_once('primary', build_cmd(primary=True, force_no_playlist=True if is_youtube else False), 50)
+        # 快速模式：减少阶段数和超时时间
+        fast_mode = os.environ.get('LUMINA_FAST_INFO','').lower() in ('1','true','yes')
+        max_stages = int(os.environ.get('INFO_MAX_STAGES', '2' if fast_mode else '5'))
+        
+        # 智能早期退出：检测到这些错误立即停止后续阶段
+        def should_stop_early(stderr_msg: str) -> bool:
+            """检测是否应该立即停止后续阶段"""
+            if not stderr_msg:
+                return False
+            lower_msg = stderr_msg.lower()
+            # 年龄限制/需要登录 - 不会通过重试解决
+            if 'sign in to confirm' in lower_msg or 'confirm your age' in lower_msg:
+                return True
+            # 私有视频/会员专属 - 不会通过重试解决
+            if 'private' in lower_msg or 'members-only' in lower_msg:
+                return True
+            # 视频不存在/已删除 - 不会通过重试解决
+            if 'video unavailable' in lower_msg or 'has been removed' in lower_msg:
+                return True
+            # 不支持的网站 - 不会通过重试解决
+            if 'unsupported url' in lower_msg:
+                return True
+            return False
+        
+        # Stage 1: Primary (Twitter 用 50, YouTube 单视频优先 --no-playlist)
+        if is_twitter:
+            primary_timeout = getattr(config, 'INFO_STAGE_TIMEOUT_PRIMARY_TWITTER', 55)
+            hardened_timeout = getattr(config, 'INFO_STAGE_TIMEOUT_HARDENED_TWITTER', 65)
+            extended_timeout = getattr(config, 'INFO_STAGE_TIMEOUT_EXTENDED_TWITTER', 80)
+            v6_timeout = getattr(config, 'INFO_STAGE_TIMEOUT_V6_TWITTER', 85)
+        else:
+            primary_timeout = 50
+            hardened_timeout = 60
+            extended_timeout = 70
+            v6_timeout = 75
+        
+        # 快速模式：减少超时时间
+        if fast_mode:
+            primary_timeout = min(primary_timeout, 20)
+            hardened_timeout = min(hardened_timeout, 25)
+            extended_timeout = min(extended_timeout, 30)
+            v6_timeout = min(v6_timeout, 30)
+        # Jitter: Twitter primary 前随机退避几百毫秒, 减少并发同时命中
+        if is_twitter:
+            import random as _rnd, time as _time
+            jmin = getattr(config, 'INFO_TWITTER_JITTER_MS_MIN', 200)
+            jmax = getattr(config, 'INFO_TWITTER_JITTER_MS_MAX', 900)
+            if jmax > jmin and jmin >= 0:
+                jitter_ms = _rnd.randint(jmin, jmax)
+                _time.sleep(jitter_ms/1000.0)
+                logger.info(f"[api_info] twitter primary jitter {jitter_ms}ms")
+        inflight.stage = 'primary'
+        info = run_once('primary', build_cmd(primary=True, force_no_playlist=True if is_youtube else False), primary_timeout)
+        
+        # 智能早期退出检查
+        stage_count = 1
+        if not info and attempts and should_stop_early(attempts[-1].get('stderr_head', '')):
+            logger.info(f"[api_info] 检测到无法通过重试解决的错误，跳过后续阶段")
         # Stage 2: 若失败且是 YouTube 且 URL 可能是 playlist / 或未知原因，去掉 --no-playlist 再试
-        if not info and is_youtube:
-            info = run_once('youtube_no_restrict', build_cmd(primary=False, force_no_playlist=False), 55)
+        elif not info and is_youtube and stage_count < max_stages:
+            stage_count += 1
+            inflight.stage = 'youtube_no_restrict'
+            info = run_once('youtube_no_restrict', build_cmd(primary=False, force_no_playlist=False), min(55, primary_timeout + 5))
+            if not info and attempts and should_stop_early(attempts[-1].get('stderr_head', '')):
+                logger.info(f"[api_info] 检测到无法通过重试解决的错误，跳过后续阶段")
         # Stage 3: 加强参数 (ignore-errors / fragment retry)
-        if not info:
-            info = run_once('hardened', build_cmd(primary=False, force_no_playlist=True if is_youtube else False, hardened=True), 60)
-        # Stage 4: 退回旧逻辑 get_video_info (含缓存 + 重试)
-        if not info:
-            try:
-                info = get_video_info(url, is_playlist=False)
-                attempts.append({'stage':'legacy_helper','used':True})
-            except Exception as legacy_err:
-                attempts.append({'stage':'legacy_helper','error': str(legacy_err)[:220]})
+        if not info and stage_count < max_stages and not (attempts and should_stop_early(attempts[-1].get('stderr_head', ''))):
+            stage_count += 1
+            # 优先尝试 IPv4 hardened (对部分线路更稳定)
+            inflight.stage = 'hardened'
+            info = run_once('hardened', build_cmd(primary=False, force_no_playlist=True if is_youtube else False, hardened=True, ip_family='v4'), hardened_timeout, ip_family='v4')
+        # Stage 3b: Twitter/X extended (更长超时 + 额外 header)
+        if not info and is_twitter and stage_count < max_stages and not (attempts and should_stop_early(attempts[-1].get('stderr_head', ''))):
+            stage_count += 1
+            inflight.stage = 'extended'
+            info = run_once('extended', build_cmd(primary=False, force_no_playlist=False, hardened=True, extended=True, ip_family='v4'), extended_timeout, ip_family='v4')
+        # Stage 3c: YouTube extended (模拟浏览器行为)
+        if not info and is_youtube and stage_count < max_stages and not (attempts and should_stop_early(attempts[-1].get('stderr_head', ''))):
+            stage_count += 1
+            inflight.stage = 'youtube_extended'
+            info = run_once('youtube_extended', build_cmd(primary=False, force_no_playlist=False, hardened=True, extended=True, ip_family='v4'), extended_timeout, ip_family='v4')
+        # Stage 3d: Twitter/X IPv6 兜底 (某些运营商对 v4 出口被限 / 质量差)
+        if not info and is_twitter and stage_count < max_stages and not (attempts and should_stop_early(attempts[-1].get('stderr_head', ''))):
+            stage_count += 1
+            inflight.stage = 'twitter_v6'
+            info = run_once('twitter_v6', build_cmd(primary=False, force_no_playlist=False, hardened=True, extended=True, ip_family='v6'), v6_timeout, ip_family='v6')
+        # Stage 3e: YouTube IPv6 兜底
+        if not info and is_youtube and stage_count < max_stages and not (attempts and should_stop_early(attempts[-1].get('stderr_head', ''))):
+            stage_count += 1
+            inflight.stage = 'youtube_v6'
+            info = run_once('youtube_v6', build_cmd(primary=False, force_no_playlist=False, hardened=True, extended=True, ip_family='v6'), v6_timeout, ip_family='v6')
+        
+        # 记录实际使用的阶段数
+        if info:
+            logger.info(f"[api_info] 成功获取信息，使用了 {stage_count} 个阶段")
+        # 移除 legacy_helper 退回阶段以减少一次额外进程调用 (加快失败短路)
         if not info:
             # 所有阶段都失败
             # 解析出最有代表性的错误
@@ -1171,14 +1689,56 @@ def api_info():
                     break
             code, friendly = _classify_with_code(err_snippet or '获取信息失败')
             site_type = 'adult' if is_adult_site else 'twitter' if is_twitter else ('youtube' if is_youtube else 'general')
-            return jsonify({
+            # 识别 Unsupported URL 专用友好提示
+            low_err = (err_snippet or '').lower()
+            if 'unsupported url' in low_err:
+                code = 'unsupported_url'
+                # 为用户提供更明确提示（不进入长冷却，避免误伤用户反复尝试）
+                friendly = '该站点暂不支持或未被 yt-dlp 解析 (Unsupported URL)'
+                # 对不支持的站点缩短冷却 (例如 30s) 避免长时间阻塞
+                short_cd = 30
+                video_info_cache.set(neg_cache_key, {
+                    'last_err': friendly,
+                    'ts': time.time(),
+                    'count': (neg_rec.get('count',0)+1) if neg_rec else 1,
+                    'short_cd': True,
+                    'custom_cooldown': short_cd
+                })
+                err_resp = {
+                    'error': friendly,
+                    'error_code': code,
+                    'attempts': attempts,
+                    'site_type': site_type,
+                    'hint': '请确认 URL 所属站点是否被 yt-dlp 支持，或等待后续版本扩展。',
+                    'unsupported': True
+                }
+                inflight.error = {**err_resp, '_status': 400}
+                _publish_and_cleanup_inflight(url, inflight)
+                return jsonify(err_resp), 400
+            # 写入负面缓存
+            video_info_cache.set(neg_cache_key, {
+                'last_err': friendly,
+                'ts': time.time(),
+                'count': (neg_rec.get('count',0)+1) if neg_rec else 1
+            })
+            err_resp = {
                 'error': friendly,
                 'error_code': code or 'unknown',
                 'attempts': attempts,
                 'site_type': site_type
-            }), 502
+            }
+            inflight.error = {**err_resp, '_status': 502}
+            _publish_and_cleanup_inflight(url, inflight)
+            return jsonify(err_resp), 502
         # 缓存成功结果
         video_info_cache.set(cache_key, info)
+        # 成功清理负面缓存
+        if neg_rec:
+            # 覆盖为一个轻量标记以清空失败影响 (若缓存无删除能力)
+            try:
+                video_info_cache.set(neg_cache_key, {'cleared': True, 'ts': time.time(), 'count': 0})
+            except Exception:
+                pass
         if attempts:
             logger.info(f"[api_info] 探测成功 (stages={len(attempts)}) 缓存写入")
 
@@ -1328,8 +1888,50 @@ def api_info():
     # 如果是缓存命中可附加标记
     if cached:
         payload['cached'] = True
+    # 将完整 payload 发布给等待者 (不含 HTTP status)
+    if inflight and inflight.result is None:
+        try:
+            inflight.result = dict(payload)
+        except Exception:
+            inflight.result = {'ok': True}
+        _publish_and_cleanup_inflight(url, inflight)
     return jsonify(payload)
     return jsonify(payload)
+
+@app.route('/diag/proxy')
+def diag_proxy():
+    """诊断当前代理可用性与最近的 twitter 预探测。
+    返回: proxy_url, head 测试结果 (x.com / youtube), 最近预探测快照。
+    """
+    proxy_url = getattr(config, 'PROXY_URL', '') or os.environ.get('LUMINA_PROXY','')
+    report: dict[str, Any] = {
+        'proxy_url': proxy_url or None,
+        'tests': [],
+        'last_twitter_preflight': LAST_TWITTER_PREFLIGHT
+    }
+    if not proxy_url:
+        report['message'] = '未配置代理 (设置 LUMINA_PROXY 环境变量即可)'
+        return jsonify(report)
+    try:
+        import requests  # type: ignore
+        test_targets = [
+            ('x.com', 'https://x.com/robots.txt'),
+            ('youtube', 'https://www.youtube.com/robots.txt')
+        ]
+        for name, tgt in test_targets:
+            t0 = time.time()
+            rec: dict[str, Any] = {'target': name, 'url': tgt}
+            try:
+                r = requests.head(tgt, timeout=8, proxies={'http': proxy_url, 'https': proxy_url}, allow_redirects=True)
+                rec['status_code'] = r.status_code
+                rec['elapsed_ms'] = int((time.time()-t0)*1000)
+                rec['ok'] = r.status_code in (200,301,302,400,401,403,404)
+            except Exception as e:
+                rec['error'] = str(e)[:160]
+            report['tests'].append(rec)
+    except Exception as e:
+        report['import_error'] = str(e)
+    return jsonify(report)
 
 # ---------------- 任务创建 & 查询 API (第一阶段最小版) ----------------
 @app.route('/api/tasks', methods=['POST'])
@@ -1337,7 +1939,7 @@ def api_create_task():
     tm = _get_task_manager()
     if not tm:
         return jsonify({'error': '任务系统未初始化'}), 500
-    data = request.get_json(silent=True) or {}
+    data = _safe_get_json(request)
     url = (data.get('url') or '').strip()
     if not url:
         return jsonify({'error': '缺少 url', 'error_code': 'invalid_input'}), 400
@@ -1359,12 +1961,15 @@ def api_create_task():
     
     skip_probe = bool(data.get('skip_probe'))
     info_cache = data.get('info_cache') if isinstance(data.get('info_cache'), dict) else None
+    # 新增：封面图下载
+    write_thumbnail = bool(data.get('write_thumbnail'))
+    
     task = tm.add_task(url=url, video_format=video_format, audio_format=audio_format,
                        subtitles=subtitles, auto_subtitles=auto_subtitles,
                        prefer_container=prefer_container, filename_template=filename_template,
                        retry=retry, geo_bypass=geo_bypass,
                        mode=mode, quality=quality, subtitles_only=subtitles_only,
-                       skip_probe=skip_probe, info_cache=info_cache)
+                       skip_probe=skip_probe, info_cache=info_cache, write_thumbnail=write_thumbnail)
     return jsonify({'task_id': task.id, 'status': task.status})
 
 @app.route('/api/tasks/<task_id>', methods=['GET'])
@@ -1428,7 +2033,7 @@ def api_tasks_cleanup():
     tm = _get_task_manager()
     if not tm:
         return jsonify({'error': '任务系统未初始化'}), 500
-    payload = request.get_json(silent=True) or {}
+    payload = _safe_get_json(request)
     max_keep = int(payload.get('max_keep', 200))
     remove_active = bool(payload.get('remove_active', False))
     if max_keep <= 0:
@@ -1486,7 +2091,7 @@ def api_open_download_dir():
 def api_reveal_file():
     """在资源管理器中选中指定文件。传入 JSON: {"name":"文件名或相对路径"}
     为安全起见仅允许位于 DOWNLOAD_DIR 内部。"""
-    data = request.get_json(silent=True) or {}
+    data = _safe_get_json(request)
     name = data.get('name')
     if not name:
         return jsonify({'error': '缺少 name'}), 400
@@ -1527,7 +2132,15 @@ def api_last_finished_file():
 
 
 def open_browser():
-    webbrowser.open_new("http://127.0.0.1:5001")
+    try:
+        port = int(os.environ.get('LUMINA_PORT', getattr(config, 'SERVER_PORT', 33210)))
+    except Exception:
+        port = 33210
+    # 支持通过环境变量禁止自动打开浏览器 (批处理/无人值守场景)
+    if os.environ.get('LUMINA_NO_BROWSER','').lower() in ('1','true','yes','on'):  # type: ignore[arg-type]
+        logger.info('[BOOT] 检测到 LUMINA_NO_BROWSER=1, 跳过自动打开浏览器')
+        return
+    webbrowser.open_new(f"http://127.0.0.1:{port}")
 
 if __name__ == '__main__':
     logger.info("🚀 正在初始化流光下载器...")
@@ -1550,6 +2163,16 @@ if __name__ == '__main__':
     # 从配置模块读取端口
     port = int(os.environ.get('LUMINA_PORT', config.SERVER_PORT))
     logger.info(f"服务器即将启动在 http://127.0.0.1:{port} (UI_VERSION={UI_VERSION})")
+    # 如果代理端口与服务器端口冲突，给出提示
+    try:
+        proxy_url = getattr(config, 'PROXY_URL', '')
+        if proxy_url:
+            import re
+            m = re.match(r'^[a-zA-Z0-9+]+://[^:]+:(\d+)$', proxy_url.strip())
+            if m and m.group(1) == str(port):
+                logger.warning(f"[WARN] 代理端口({m.group(1)}) 与服务器监听端口相同，容易混淆：请确认代理软件是否真的监听该端口，且不要把本地服务端口当成代理端口。")
+    except Exception:
+        pass
     Timer(1, open_browser).start()
     
     app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
@@ -1611,4 +2234,6 @@ def whoami():
         'template_searchpath': getattr(app.jinja_loader, 'searchpath', None),
         'routes': [r.rule for r in app.url_map.iter_rules() if r.endpoint != 'static'][:40]
     })
+
+import sys, os; print('PYPATH_DEBUG', sys.path[:5])
 

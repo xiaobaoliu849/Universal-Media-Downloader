@@ -25,7 +25,10 @@ def export_cookies():
         print(f"Cookies saved to: {cookies_file}")
         return cookies_file
     except Exception as e:
-        print(f"Error with Chrome: {e}")
+        if "Could not copy Chrome cookie database" in str(e):
+            print("Error: Could not access Chrome cookies. Please close all Chrome browser windows and try again.")
+        else:
+            print(f"Error with Chrome: {e}")
         try:
             # Try Edge if Chrome fails
             cookies = browser_cookie3.edge(domain_name='.youtube.com')
@@ -48,7 +51,10 @@ def export_cookies():
             print(f"Cookies saved to: {cookies_file}")
             return cookies_file
         except Exception as e:
-            print(f"Error with Edge: {e}")
+            if "Could not copy Edge cookie database" in str(e):
+                print("Error: Could not access Edge cookies. Please close all Microsoft Edge browser windows and try again.")
+            else:
+                print(f"Error with Edge: {e}")
             return None
 
 if __name__ == '__main__':

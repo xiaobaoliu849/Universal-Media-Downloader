@@ -1,0 +1,472 @@
+
+        body {
+            margin: 0;
+            padding: 0;
+            min-height: 100vh;
+            background: #f3f4f6;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+
+        .header {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            background: #ffffff;
+            padding: 20px 0;
+            text-align: center;
+            z-index: 1000;
+            border-bottom: 1px solid #e5e7eb;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .header-content {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 20px;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 160px 40px 40px;
+            text-align: center;
+        }
+
+        .logo {
+            width: 100px;
+            height: 100px;
+            transition: transform 0.3s ease;
+        }
+
+        .logo:hover {
+            transform: scale(1.05);
+        }
+
+        h1 {
+            color: #1d9bf0;
+            font-size: 2.5em;
+            margin: 0;
+        }
+
+        .input-container {
+            background: #ffffff;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            border: 1px solid #e5e7eb;
+        }
+
+        .input-row {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .fetch-btn {
+            background: #1d9bf0;
+            color: #fff;
+            border: none;
+            padding: 15px 20px;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            white-space: nowrap;
+        }
+
+        .fetch-btn:hover {
+            background: #1a8cd8;
+        }
+
+        .fetch-btn:disabled {
+            background: #666;
+            cursor: not-allowed;
+        }
+
+        input[type="text"] {
+            flex: 1;
+            padding: 15px;
+            border: 2px solid #d1d5db;
+            background: #ffffff;
+            border-radius: 10px;
+            color: #374151;
+            font-size: 16px;
+            box-sizing: border-box;
+        }
+
+        .fetch-btn {
+            background: #1d9bf0;
+            color: #fff;
+            border: none;
+            padding: 15px 20px;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            white-space: nowrap;
+        }
+
+        .fetch-btn:hover {
+            background: #1a8cd8;
+        }
+
+        .fetch-btn:disabled {
+            background: #666;
+            cursor: not-allowed;
+        }
+
+        input[type="text"]:focus {
+            border-color: #1d9bf0;
+            outline: none;
+        }
+
+        .options-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 20px;
+            gap: 10px;
+        }
+
+        .option-group {
+            flex: 1;
+        }
+
+        .download-group {
+            flex: 0 0 auto;
+            display: flex;
+            align-items: flex-end;
+        }
+
+        .option-group label {
+            display: block;
+            color: #374151;
+            margin-bottom: 5px;
+            font-size: 14px;
+        }
+
+        .subtitle-row {
+            display: flex;
+            gap: 10px;
+            align-items: flex-end;
+        }
+
+        .subtitle-btn {
+            background: #1d9bf0;
+            color: #fff;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            white-space: nowrap;
+        }
+
+        .subtitle-btn:hover {
+            background: #1a8cd8;
+        }
+
+        .subtitle-btn:disabled {
+            background: #666;
+            cursor: not-allowed;
+        }
+
+        select, .radio-group {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #d1d5db;
+            background: #ffffff;
+            border-radius: 8px;
+            color: #374151;
+            font-size: 14px;
+        }
+
+        select:focus {
+            border-color: #1d9bf0;
+            outline: none;
+        }
+
+        .radio-group {
+            display: flex;
+            gap: 10px;
+            padding: 0;
+            border: none;
+            background: none;
+        }
+
+        .radio-option {
+            flex: 1;
+            position: relative;
+        }
+
+        .radio-option input[type="radio"] {
+            position: absolute;
+            opacity: 0;
+            width: 100%;
+            height: 100%;
+            margin: 0;
+        }
+
+        .radio-option label {
+            display: block;
+            padding: 10px;
+            background: #f9fafb;
+            border: 2px solid #d1d5db;
+            border-radius: 8px;
+            color: #374151;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .radio-option input[type="radio"]:checked + label {
+            background: #1d9bf0;
+            border-color: #1d9bf0;
+        }
+
+        .radio-group {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr 1fr;
+            gap: 10px;
+            padding: 0;
+            border: none;
+            background: none;
+        }
+
+        .download-section {
+            margin-top: 20px;
+            text-align: center;
+        }
+
+        .download-buttons {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .download-btn {
+            flex: 1;
+            background: #1d9bf0;
+            color: #fff;
+            border: none;
+            padding: 15px;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        .download-btn:hover {
+            background: #1a8cd8;
+        }
+
+        .download-btn:disabled {
+            background: #666;
+            cursor: not-allowed;
+        }
+
+        #progress {
+            margin-top: 20px;
+            display: none;
+            background: #f9fafb;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: left;
+            border: 1px solid #e5e7eb;
+        }
+
+        .progress-header {
+            margin-bottom: 10px;
+        }
+
+        .progress-title {
+            color: #374151;
+            font-size: 14px;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .progress-url {
+            color: #1d9bf0;
+            font-size: 12px;
+            word-break: break-all;
+            margin-bottom: 15px;
+        }
+
+        .progress-bar {
+            height: 8px;
+            background: #192734;
+            border-radius: 4px;
+            margin-bottom: 10px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #1d9bf0, #00d4aa);
+            width: 0%;
+            transition: width 0.3s ease;
+            border-radius: 4px;
+        }
+
+        .progress-stats {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            font-size: 13px;
+        }
+
+        .progress-status {
+            color: #374151;
+            font-weight: bold;
+        }
+
+        .progress-details {
+            color: #8899a6;
+            display: flex;
+            gap: 15px;
+        }
+
+        .progress-actions {
+            display: flex;
+            justify-content: flex-end;
+            margin-top: 10px;
+        }
+
+        .cancel-btn {
+            background: #ff4757;
+            color: #fff;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        .cancel-btn:hover {
+            background: #ff3742;
+        }
+
+        .video-info {
+            display: none;
+            background: #f9fafb;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            text-align: left;
+            border: 1px solid #e5e7eb;
+        }
+
+        .video-info h3 {
+            color: #1d9bf0;
+            margin: 0 0 10px 0;
+            font-size: 18px;
+        }
+
+        .video-info p {
+            color: #374151;
+            margin: 5px 0;
+            font-size: 14px;
+        }
+
+        .quality-section {
+            display: flex;
+        }
+
+        .subtitle-section {
+            margin-top: 20px;
+        }
+
+        .progress-section {
+            margin-top: 20px;
+        }
+
+        .log-section {
+            margin-top: 20px;
+            text-align: left;
+        }
+
+        .log-section h4 {
+            color: #1d9bf0;
+            margin: 0 0 10px 0;
+            font-size: 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .log-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .log-title {
+            color: #1d9bf0;
+            font-size: 16px;
+            margin: 0;
+        }
+
+        .log-stats {
+            display: flex;
+            gap: 15px;
+            font-size: 12px;
+            color: #8899a6;
+        }
+
+        .log-container {
+            background: #f9fafb;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 10px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 11px;
+            color: #374151;
+            white-space: pre-wrap;
+            line-height: 1.4;
+        }
+
+        .action-buttons { display:flex; gap:10px; margin-top:20px; justify-content:center; }
+        /* 移除底部 util-buttons，将操作按钮上移到日志标题行 */
+
+        .clear-btn {
+            background: #6b7280;
+            color: #fff;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        .clear-btn:hover {
+            background: #4b5563;
+        }
+
+        .clear-btn:disabled {
+            background: #9ca3af;
+            cursor: not-allowed;
+        }
+
+        .start-text {
+            color: #8899a6;
+            font-size: 16px;
+            margin-top: 30px;
+            text-align: center;
+        }
+    

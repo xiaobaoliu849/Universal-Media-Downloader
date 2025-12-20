@@ -1,0 +1,32 @@
+手动导出 YouTube Cookies 指南
+================================
+
+由于年龄限制视频需要登录验证，你必须手动导出浏览器 cookies。
+
+方法 1：使用浏览器扩展（推荐）
+-------------------------------
+1. 安装 "Get cookies.txt LOCALLY" 扩展：
+   - Chrome: https://chrome.google.com/webstore/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpgcndjmalakk
+   - Edge: https://microsoftedge.microsoft.com/addons/detail/get-cookiestxt-locally/hlmhieipphihnmgdhgfjkfapieahalkg
+   - Firefox: https://addons.mozilla.org/firefox/addon/get-cookies-txt-locally/
+
+2. 登录 YouTube 账号
+3. 打开扩展，选择 "Netscape" 格式
+4. 点击 "Download cookies.txt"
+5. 将下载的文件重命名为 "cookies.txt" 并放到项目目录
+
+方法 2：使用开发者工具
+-----------------------
+1. 登录 YouTube
+2. 按 F12 打开开发者工具
+3. 切换到 Application/Storage 标签
+4. 找到 Cookies -> https://www.youtube.com
+5. 右键复制所有 cookies
+6. 手动创建 Netscape 格式文件
+
+方法 3：使用 yt-dlp 参数测试
+-----------------------------
+直接运行测试命令：
+python -m yt_dlp --cookies-from-browser chrome --no-download https://www.youtube.com/watch?v=jrKTpQ41WSE
+
+如果提示权限问题，尝试以管理员身份运行。

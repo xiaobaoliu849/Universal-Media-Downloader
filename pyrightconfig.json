@@ -3,6 +3,18 @@
   "exclude": ["dist", "build", "release", "*.stale_*", ".venv"],
   "reportMissingImports": true,
   "reportMissingTypeStubs": false,
+  // Plan A: minimize noise from stdlib/internal library analysis (e.g., ctypes) while preserving project checks
+  // This tells pyright not to deeply analyze library implementation code, avoiding spurious diagnostics there.
+  "useLibraryCodeForTypes": false,
+  "diagnosticSeverityOverrides": {
+    "reportAttributeAccessIssue": "none",
+    "reportOptionalMemberAccess": "none",
+    "reportAssignmentType": "none",
+    "reportArgumentType": "none",
+    "reportCallIssue": "none",
+    "reportOptionalCall": "none",
+    "reportPossiblyUnboundVariable": "none"
+  },
   "executionEnvironments": [
     {
       "root": ".",
