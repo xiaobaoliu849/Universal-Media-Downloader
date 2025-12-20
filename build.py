@@ -51,11 +51,17 @@ def environment_self_check():
         print("[提示] 当前使用的是 Conda/虚拟环境，若目标是在普通 Windows 上运行，建议改用系统安装的 Python 重打包。")
     print("[环境自检] 完成\n")
 
-def run_command(cmd, description):
-    """运行命令并显示结果 (宽容解码)"""
+def run_command(cmd, description, shell=False, print_all=False):
+    """运行命令并显示结果 (宽容解码)
+    cmd: list 或 str
+    print_all: True 时不截断输出 (用于调试)
+    """
     print(f"\n正在{description}...")
     try:
-        proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if isinstance(cmd, list):
+            proc = subprocess.Popen(cmd, shell=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        else:
+            proc = subprocess.Popen(cmd, shell=shell, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         out_b, err_b = proc.communicate()
         rc = proc.returncode
         def _decode(data: bytes) -> str:
@@ -72,14 +78,15 @@ def run_command(cmd, description):
         if rc == 0:
             print(f"+ {description}成功")
             if out.strip():
-                print(out.strip()[:800])
+                snippet = out.strip() if print_all else out.strip()[:800]
+                print(snippet)
             return True
         else:
             print(f"- {description}失败 (returncode={rc})")
-            if err.strip():
-                print(err.strip()[:800])
-            else:
-                print(out.strip()[:800])
+            text = err.strip() or out.strip()
+            if text:
+                snippet = text if (print_all or len(text) < 2000) else text[:2000]
+                print(snippet)
             return False
     except Exception as e:
         print(f"- {description}异常: {e}")
@@ -183,11 +190,22 @@ def clean_build():
     if not all_ok:
         print("[WARN] 部分旧目录未能完全删除，继续尝试打包 (如果打包失败请先手动清理后重试)。")
 
-def build_app():
-    """构建应用"""
+def build_app(extra_debug=False):
+    """构建应用 (强制使用当前解释器，以避免 PATH 中其它环境的 PyInstaller 干扰)"""
     print("\n开始打包应用...")
-    
-    if not run_command("pyinstaller build_app.spec", "打包应用"):
+    pyinstaller_cmd = [sys.executable, '-m', 'PyInstaller', '--noconfirm']
+    # 若需要强制清理缓存或调试
+    if extra_debug:
+        pyinstaller_cmd += ['--clean', '--log-level=DEBUG']
+    pyinstaller_cmd.append('build_app.spec')
+    # 显示被调用的 Python 版本与 PyInstaller 模块来源
+    try:
+        import PyInstaller as _pi
+        print(f"[PyInstaller] 模块来源: {_pi.__file__}")
+    except Exception:
+        print("[PyInstaller] 无法导入 PyInstaller (将尝试执行命令)")
+    if not run_command(pyinstaller_cmd, "打包应用", shell=False, print_all=extra_debug):
+        print("[诊断] 若上方输出被截断，可重新运行: python build.py --debug 以获取完整日志")
         return False
     
     # 检查输出文件
@@ -336,7 +354,9 @@ def main():
     clean_build()
     
     # 开始构建
-    if build_app():
+    # 是否开启调试模式
+    extra_debug = '--debug' in sys.argv
+    if build_app(extra_debug=extra_debug):
         print("\n+ 构建完成！")
         
         # 询问是否打开文件夹

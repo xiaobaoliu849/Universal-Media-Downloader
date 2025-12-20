@@ -3,6 +3,52 @@ import sys
 import platform
 from pathlib import Path
 
+# ---------------------------------------
+# 轻量 .env 加载 (在打包后的双击启动环境里通常没有提前设置环境变量)
+# 规则:
+#   1. 查找顺序: (a) 与本文件同目录 .env  (b) 当前工作目录 .env
+#   2. 行格式 KEY=VALUE （忽略 # 开头 / 空行）
+#   3. 若系统已存在同名变量，不覆盖 (尊重外部显式设置)
+#   4. VALUE 去除包裹引号 ' 或 " （简单处理，不做转义展开）
+# 目的: 让用户可在发布目录放置 .env 来配置 LUMINA_PROXY / 端口 / 超时 等。
+# ---------------------------------------
+def _load_dotenv():
+    candidates = []
+    try:
+        here = Path(__file__).resolve().parent
+        candidates.append(here / '.env')
+    except Exception:
+        pass
+    try:
+        candidates.append(Path.cwd() / '.env')
+    except Exception:
+        pass
+    loaded = False
+    for p in candidates:
+        try:
+            if not p.exists():
+                continue
+            with p.open('r', encoding='utf-8', errors='ignore') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith('#') or '=' not in line:
+                        continue
+                    k, v = line.split('=', 1)
+                    k = k.strip()
+                    if not k:
+                        continue
+                    if k in os.environ:  # 不覆盖已有
+                        continue
+                    v = v.strip().strip('"').strip("'")
+                    os.environ[k] = v
+            loaded = True
+            break  # 只用第一个命中的 .env
+        except Exception:
+            continue
+    # 可按需调试: print(f"[DEBUG] dotenv loaded={loaded}")
+
+_load_dotenv()
+
 # ---------------- 版本与特性开关 ----------------
 # 统一版本号（打包、日志、诊断接口都可读取）通过 version.py 单一来源
 try:
@@ -195,8 +241,54 @@ if _legacy:
 
 # --- 网络与服务器设置 ---
 
-# Flask 服务器监听的端口
+# Flask 服务器监听的端口 (默认 5001，可用环境变量 LUMINA_PORT 覆盖)
 SERVER_PORT = 5001
+
+# 可选全局代理（供 yt-dlp 使用），例如 http://127.0.0.1:7890 。
+# 通过环境变量 LUMINA_PROXY 指定；为空则不加 --proxy 参数。
+PROXY_URL = os.environ.get('LUMINA_PROXY') or ''
+
+# --- 信息探测 / 超时 / 冷却集中配置 ---
+# 可通过环境变量覆盖（若需要更灵活的无代码调参）。
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        v = os.environ.get(name)
+        if v is None:
+            return default
+        return float(v)
+    except Exception:
+        return default
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        v = os.environ.get(name)
+        if v is None:
+            return default
+        return int(float(v))
+    except Exception:
+        return default
+
+# in-flight 等待窗口
+INFO_MAX_WAIT_DEFAULT = _env_float('INFO_MAX_WAIT_DEFAULT', 18.0)
+INFO_MAX_WAIT_TWITTER = _env_float('INFO_MAX_WAIT_TWITTER', 40.0)
+# 单个 inflight 探测最长占用窗口，超过后允许新请求强制重启 (秒)
+INFO_INFLIGHT_STALE_SEC = _env_float('INFO_INFLIGHT_STALE_SEC', 90.0)
+
+# 分阶段 timeout (Twitter/X)
+INFO_STAGE_TIMEOUT_PRIMARY_TWITTER = _env_int('INFO_STAGE_TIMEOUT_PRIMARY_TWITTER', 55)
+INFO_STAGE_TIMEOUT_HARDENED_TWITTER = _env_int('INFO_STAGE_TIMEOUT_HARDENED_TWITTER', 65)
+INFO_STAGE_TIMEOUT_EXTENDED_TWITTER = _env_int('INFO_STAGE_TIMEOUT_EXTENDED_TWITTER', 80)
+INFO_STAGE_TIMEOUT_V6_TWITTER = _env_int('INFO_STAGE_TIMEOUT_V6_TWITTER', 85)
+
+# 负面失败冷却
+INFO_NEG_COOLDOWN_BASE = _env_int('INFO_NEG_COOLDOWN_BASE', 180)
+INFO_NEG_COOLDOWN_ESCALATED = _env_int('INFO_NEG_COOLDOWN_ESCALATED', 420)
+INFO_NEG_ESCALATE_THRESHOLD = _env_int('INFO_NEG_ESCALATE_THRESHOLD', 3)
+
+# 随机退避(毫秒)范围用于 Twitter primary 前抖动分散
+INFO_TWITTER_JITTER_MS_MIN = _env_int('INFO_TWITTER_JITTER_MS_MIN', 200)
+INFO_TWITTER_JITTER_MS_MAX = _env_int('INFO_TWITTER_JITTER_MS_MAX', 900)
 
 # --- 初始化目录 ---
 # 确保下载和日志目录在程序启动时存在（惰性创建，避免不可写失败直接崩溃）

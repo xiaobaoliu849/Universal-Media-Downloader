@@ -1,7 +1,13 @@
-from PIL import Image, ImageDraw
+try:  # Optional dependency: Pillow
+    from PIL import Image, ImageDraw  # type: ignore
+except Exception:  # pragma: no cover
+    Image = None  # type: ignore
+    ImageDraw = None  # type: ignore
 import struct
 
 def create_video_downloader_icon():
+    if Image is None or ImageDraw is None:
+        raise ImportError("Pillow 未安装，执行: pip install Pillow")
     # Create icon sizes needed for Windows
     sizes = [16, 32, 48, 256]
 
