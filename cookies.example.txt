@@ -1,0 +1,6 @@
+﻿# 将浏览器导出的 Netscape 格式 cookies 放到项目根的 cookies.txt
+# 不要把真实 cookies.txt 提交到仓库。
+# 如果没有 cookies.txt，程序会匿名访问；需要强制浏览器提取可设置：
+#   set LUMINA_FORCE_BROWSER_COOKIES=1
+# 禁用浏览器提取：
+#   set LUMINA_DISABLE_BROWSER_COOKIES=1

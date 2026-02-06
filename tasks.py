@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 # -------- 超时/等待配置 (后期可迁移到 config.py) --------
 PROBE_TIMEOUT_DEFAULT = 40  # 秒 (大多数站点)
 PROBE_TIMEOUT_TWITTER = 55  # Twitter/X 更容易慢/重置，给更长时间
+PROBE_TIMEOUT_MISSAV = 180  # missav.ws Cloudflare 保护需要更长时间
 
 # 在 Windows 下隐藏所有子进程控制台窗口，避免打包后的 exe 弹出黑色命令窗
 CREATE_NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
@@ -433,12 +434,15 @@ class TaskManager:
         adaptive_selector = None if direct_selector is None else build_adaptive_selector()
 
         # ---------- 构建与执行下载（更稳的默认 + 自动降级 + aria2c 兜底） ----------
-        def build_args(conc: int, chunk: str, use_aria: bool=False) -> List[str]:
+        # ---------- 构建与执行下载（更稳的默认 + 自动降级 + aria2c 兜底） ----------
+        def build_args(conc: int, chunk: str, use_aria: bool=False, extra_args: List[str]=None, 
+                       timeout: int=15, retries: int=20, fragment_retries: int=50, retry_sleep: int=2) -> List[str]:
             # 确保所有参数都是字符串类型
             format_selector_str = str(format_selector) if format_selector is not None else 'best'
             a = [str(self.ytdlp_path), '-f', format_selector_str,
                  '--no-warnings', '--no-check-certificate', '--newline', '--ignore-errors',
-                 '--socket-timeout', '15', '--retries', '20', '--fragment-retries', '50', '--retry-sleep', '2',
+                 '--socket-timeout', str(timeout), '--retries', str(retries), 
+                 '--fragment-retries', str(fragment_retries), '--retry-sleep', str(retry_sleep),
                  '--force-ipv4', '--concurrent-fragments', str(conc), '--http-chunk-size', chunk,
                  '--hls-prefer-native', '-o', out_path_template]
             proxy_url = os.environ.get('LUMINA_PROXY') or getattr(__import__('config'),'PROXY_URL','')
@@ -449,6 +453,15 @@ class TaskManager:
                 a += ['--merge-output-format', forced_container]
             if task.geo_bypass:
                 a.append('--geo-bypass')
+            
+            # 注入站点特定参数 (Header, Impersonate, etc.)
+            if extra_args:
+                a += extra_args
+
+            # 日志记录 MissAV 等特殊站点的参数注入情况
+            if extra_args and 'impersonate' in str(extra_args):
+                task.log.append('[download] 检测到 impersonate 参数，已启用 Cloudflare 绕过')
+
             # Cookie 策略：默认只用 cookies.txt；仅在 FORCE 且未 DISABLE 且非 subtitles_only 时尝试浏览器
             force_browser = os.environ.get('LUMINA_FORCE_BROWSER_COOKIES','').lower() in ('1','true','yes')
             disable_browser = os.environ.get('LUMINA_DISABLE_BROWSER_COOKIES','').lower() in ('1','true','yes')
@@ -475,7 +488,7 @@ class TaskManager:
             a.append(task.url)
             
             # 添加格式选择调试信息
-            logger.info(f"[YT_DLP_CMD] 任务 {task.id} - Format: '{format_selector_str}', OutputTemplate: {out_path_template}, Aria2c: {use_aria}, Full cmd length: {len(a)} args")
+            logger.info(f"[YT_DLP_CMD] 任务 {task.id} - Format: '{format_selector_str}', Timeout: {timeout}s, Aria2c: {use_aria}, Full cmd length: {len(a)} args")
             # 记录实际使用的格式选择器供调试
             task.log.append(f"[DEBUG] 使用格式选择器: {format_selector_str}")
             return a
@@ -541,12 +554,77 @@ class TaskManager:
 
         # FAST_START: 允许通过环境变量提升初始并发与块大小
         fast_start = os.environ.get('LUMINA_FAST_START','').lower() in ('1','true','yes')
-        init_conc = 4
-        init_chunk = '4M'
-        if fast_start:
+        
+        # 使用 site_configs 获取参数
+        import site_configs
+        site_conf = site_configs.get_site_config(task.url)
+        sc_args = site_conf.get_download_args(fast_mode=fast_start)
+
+        # 默认并发与分块
+        init_conc = sc_args.get('concurrency', 4)
+        init_chunk = sc_args.get('chunk_size', '4M')
+        
+        if fast_start and init_conc < 8:
             init_conc = 8
             init_chunk = '8M'
-        rc, recent = run_once(build_args(init_conc, init_chunk, use_aria=False), f"[speed] 使用内置下载器 (并发={init_conc}, 块={init_chunk}, IPv4)")
+            
+        # 智能选择是否启用 aria2c 
+        # 1. 如果 site_config 明确指定了 True/False (例如 MissAV=False), 听配置的
+        # 2. 否则走 _should_use_aria2c 检测
+        conf_use_aria = sc_args.get('use_aria2c')
+        if conf_use_aria is not None:
+             use_aria_initial = conf_use_aria
+        else:
+             use_aria_initial = self._should_use_aria2c(task.url) if hasattr(self, '_should_use_aria2c') else False
+        
+        # 注入 site_config 中的额外 args (header, impersonate) 到 build_args
+        # 注意：我们需要修改 build_args 及其调用，或者直接在这里把 args 传进去？
+        # `build_args` 内部目前没有接收 extra_args。我们需要简单修改 build_args 的实现，或者让 build_args 也能读 site_config
+        # 考虑到 build_args 是局部函数，且 task 对象在此作用域，我们在 build_args 内部由于闭包也能访问 site_configs logic? 
+        # 不，build_args 在 definition line 437。
+        # 让我们修改 build_args 让它能包含 site specifics。
+        
+        # ... Wait, I cannot modify build_args definition in this replace block easily because it's far above.
+        # But `build_args` calls `task.url` inside.
+        # Actually `build_args` definition is seemingly independent.
+        # Let's look at `build_args` (lines 437-500) again. It has logic for MissAV specifically.
+        # I need to update `build_args` as well.
+        
+        # Since I'm in `_execute_download`, `build_args` is defined inside it.
+        # I should probably do two edits: one to update `build_args` and one to update the call site.
+        # Or I can try to find where `build_args` is defined and replace it too if it's close.
+        # They are separate in the file. `build_args` is around 437, this call is around 560.
+        
+        # Let's first update this call site to look correct assuming build_args is updated.
+        
+        # 注入 site_config 中的额外 args (header, impersonate) 到 build_args
+        extra_download_args = sc_args.get('args', [])
+        # 显式注入 impersonate 参数 (site_configs 中是单独 key)
+        if sc_args.get('impersonate'):
+            extra_download_args += ['--impersonate', sc_args['impersonate']]
+        
+        # 提取超时与重试配置
+        to_timeout = sc_args.get('timeout', 15)
+        to_retries = sc_args.get('retries', 20)
+        to_frag_retries = sc_args.get('fragment_retries', 50) # fragment_retries default
+        # 注意: site_configs 返回的 args 列表里可能已经包含 --sleep-interval, 这里 retry_sleep 若没配置专用 key 则用默认
+        # 目前 site_configs 没返回 retry_sleep key，但 args 里有 --retry-sleep。
+        # build_args 会再次拼 --retry-sleep，yt-dlp 以后面为准。
+        # 但我们最好别让 build_args 硬编码 2。
+        # 让我们简单点，直接传默认值，或者解析 args? 不，太复杂。
+        # 既然 build_args 接受 retry_sleep，我们传 5 因为 MissAV 需要慢点重试?
+        # site_configs 里 MissAV args 包含 --sleep-interval 5 和 --max-sleep-interval 15 (fragment interval)
+        # 并没有 explicit retry_sleep key in dict.
+        # 但 MissAV config args 可能含 --retry-sleep.
+        # 无论如何，timeout 是最重要的。
+        
+        # 构建描述字符串
+        downloader_desc = "aria2c" if use_aria_initial else "内置下载器"
+        
+        # 第一次尝试下载
+        rc, recent = run_once(build_args(init_conc, init_chunk, use_aria=use_aria_initial, extra_args=extra_download_args,
+                                         timeout=to_timeout, retries=to_retries, fragment_retries=to_frag_retries), 
+                              f"[speed] 使用{downloader_desc} (并发={init_conc}, 块={init_chunk}, IPv4)")
 
         # 如果跳过 probe 且第一次失败，并且日志包含 format 不可用的典型关键词，触发一次补 probe + 重新选择
         if rc != 0 and task.skip_probe:
@@ -567,7 +645,9 @@ class TaskManager:
                     # 若 direct 仍存在保留，否则 fallback adaptive
                     if not direct_selector_local:
                         format_selector = build_adaptive_selector()
-                    rc, recent = run_once(build_args(init_conc, init_chunk, use_aria=False), '[fallback] 补 probe 后重试')
+                    rc, recent = run_once(build_args(init_conc, init_chunk, use_aria=False, extra_args=extra_download_args,
+                                                     timeout=to_timeout, retries=to_retries, fragment_retries=to_frag_retries), 
+                                          '[fallback] 补 probe 后重试')
                 except Exception as fp_e:
                     task.log.append(f'[fast-path] 补 probe 异常: {fp_e}')
 
@@ -575,7 +655,9 @@ class TaskManager:
         if rc != 0 and direct_selector is not None and adaptive_selector:
             task.log.append('[fallback] 直接格式下载失败，回退到自适应选择器')
             format_selector = adaptive_selector
-            rc, recent = run_once(build_args(init_conc, init_chunk, use_aria=False), '[fallback] 自适应格式首次尝试')
+            rc, recent = run_once(build_args(init_conc, init_chunk, use_aria=False, extra_args=extra_download_args,
+                                             timeout=to_timeout, retries=to_retries, fragment_retries=to_frag_retries), 
+                                  '[fallback] 自适应格式首次尝试')
 
         # 若 yt-dlp 因某个更高格式测试失败(退出码非0)但已经成功落地了一个合并文件，视作“部分成功”，避免无意义的再次整轮下载
         if rc != 0:
@@ -1027,6 +1109,27 @@ class TaskManager:
             cmd += ['--proxy', proxy_url]
         if task.geo_bypass:
             cmd.append('--geo-bypass')
+
+        # missav.ws Cloudflare 保护特殊处理
+        lower_url = (task.url or '').lower()
+        is_missav = 'missav.ws' in lower_url
+        if is_missav:
+            # 使用 yt-dlp 的 impersonate 功能模拟真实浏览器
+            cmd += ['--extractor-args', 'generic:impersonate',
+                    '--socket-timeout', '120', '--extractor-retries', '8', '--http-chunk-size', '4M',
+                    '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    '--add-header', 'Accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                    '--add-header', 'Accept-Language:en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7',
+                    '--add-header', 'Referer:https://missav.ws/',
+                    '--add-header', 'Sec-Ch-Ua:"Chromium";v="120", "Google Chrome";v="120"',
+                    '--add-header', 'Sec-Ch-Ua-Mobile:?0',
+                    '--add-header', 'Sec-Fetch-Dest:document',
+                    '--add-header', 'Sec-Fetch-Mode:navigate',
+                    '--add-header', 'Sec-Fetch-Site:same-origin',
+                    '--add-header', 'Upgrade-Insecure-Requests:1',
+                    '--sleep-interval', '5', '--max-sleep-interval', '15']
+            logger.info('[PROBE] missav.ws 探测 - 添加 Cloudflare 绕过参数 (impersonate)')
+
         cmd.append(task.url)
         # Cookie 策略：有 cookies.txt 用文件；否则仅在未 subtitle-only 且未禁用时尝试浏览器自动提取
         # 新策略：默认不尝试浏览器提取，除非显式 LUMINA_FORCE_BROWSER_COOKIES=1
@@ -1054,7 +1157,8 @@ class TaskManager:
         # 根据站点类型选择探测超时
         lower_url = (task.url or '').lower()
         is_twitter = 'twitter.com' in lower_url or 'x.com' in lower_url
-        timeout_probe = PROBE_TIMEOUT_TWITTER if is_twitter else PROBE_TIMEOUT_DEFAULT
+        is_missav = 'missav.ws' in lower_url
+        timeout_probe = PROBE_TIMEOUT_TWITTER if is_twitter else (PROBE_TIMEOUT_MISSAV if is_missav else PROBE_TIMEOUT_DEFAULT)
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='ignore', timeout=timeout_probe, creationflags=CREATE_NO_WINDOW)
             if r.returncode != 0:

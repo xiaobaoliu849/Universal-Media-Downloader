@@ -1,22 +1,173 @@
-# Build artifacts
-/build/
-/dist/
-/__pycache__/
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
 *.spec
 
-# Release folder (we only track the .zip inside it)
-/release/
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
 
-# Release artifact archives (do NOT commit large packaged zips to git history)
-*_Windows.zip
-流光下载器_*.zip
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# Flask stuff:
+instance/
+.webassets-cache
+
+# Scrapy stuff:
+.scrapy
+
+# Sphinx documentation docs/
+docs/_build/
+
+# PyBuilder
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# PEP 582
+__pypackages__/
+
+# Celery stuff
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# Temporary files
+tmp*/
+*.tmp
+*.temp
+nul
+
+# Local config files
+config_local.py
+settings_local.py
+
+# Logs
+*.log
+
+# Compiled files
+*.exe
+*.dll
+*.class
+*.o
+*.a
+*.lib
+
+# Large files
 *.zip
+*.tar.gz
+*.rar
 
-# Build metadata (not for source control)
-build_meta.json
+# Service worker cache
+sw.js
 
-# Local cookies file (do NOT commit real browser/exported cookies)
-cookies.txt
+# Claude specific files
+.claude/
+tmpclaude-*/
 
-# Provide an example file instead of real cookies
-cookies.example.txt
+# Python cache
+__pycache__/
+*.pyc
+*$py.class

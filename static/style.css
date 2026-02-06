@@ -140,6 +140,9 @@
             flex: 0 0 auto;
             display: flex;
             align-items: flex-end;
+            margin-left: 15px;  /* 增加与radio选项的间距 */
+            position: relative;
+            z-index: 2;  /* 确保在radio之上 */
         }
 
         .option-group label {
@@ -203,6 +206,7 @@
         .radio-option {
             flex: 1;
             position: relative;
+            overflow: hidden;  /* 防止子元素溢出 */
         }
 
         .radio-option input[type="radio"] {
@@ -211,6 +215,8 @@
             width: 100%;
             height: 100%;
             margin: 0;
+            cursor: pointer;
+            z-index: 1;  /* 确保在label之上但不溢出 */
         }
 
         .radio-option label {
