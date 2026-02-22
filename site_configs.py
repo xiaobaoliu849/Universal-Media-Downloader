@@ -12,7 +12,7 @@ class SiteConfig:
 
     @property
     def is_missav(self) -> bool:
-        return 'missav.ws' in self.lower_url or 'missav.com' in self.lower_url
+        return 'missav' in self.lower_url
 
     @property
     def is_twitter(self) -> bool:

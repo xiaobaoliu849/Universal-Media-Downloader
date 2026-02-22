@@ -76,7 +76,7 @@ def _probe_info(manager: Any, task: Task) -> Dict[str, Any]:
         cmd.append('--geo-bypass')
 
     lower_url = (task.url or '').lower()
-    is_missav = 'missav.ws' in lower_url or 'missav.com' in lower_url
+    is_missav = 'missav' in lower_url
     is_twitter = 'twitter.com' in lower_url or 'x.com' in lower_url
 
     if is_missav:
@@ -827,6 +827,14 @@ def _audio_fallback(manager: Any, task: Task, base_template: str) -> bool:
 
         if os.path.exists(manager.cookies_file):
             audio_args += ['--cookies', manager.cookies_file]
+
+        import site_configs
+        sc_args = site_configs.get_site_config(task.url).get_download_args()
+        if sc_args.get('impersonate'):
+            audio_args += ['--impersonate', sc_args['impersonate']]
+        if sc_args.get('args'):
+            audio_args += sc_args['args']
+
 
         # Proxy
         try:
