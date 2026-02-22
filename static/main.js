@@ -475,20 +475,24 @@ function updateSubtitleOptions(subtitles, autoSubtitles) {
     }
 
     // 填充人工字幕
-    (subtitles || []).forEach(sub => {
-        const opt = document.createElement('option');
-        opt.value = sub.lang;
-        opt.textContent = `${sub.lang} (人工)`;
-        subtitleSelect.appendChild(opt);
-    });
+    if (Array.isArray(subtitles)) {
+        subtitles.forEach(sub => {
+            const opt = document.createElement('option');
+            opt.value = sub.lang;
+            opt.textContent = `${sub.lang} (人工)`;
+            subtitleSelect.appendChild(opt);
+        });
+    }
 
     // 填充自动字幕
-    (autoSubtitles || []).forEach(sub => {
-        const opt = document.createElement('option');
-        opt.value = sub.lang;
-        opt.textContent = `${sub.lang} (自动)`;
-        subtitleSelect.appendChild(opt);
-    });
+    if (Array.isArray(autoSubtitles)) {
+        autoSubtitles.forEach(sub => {
+            const opt = document.createElement('option');
+            opt.value = sub.lang;
+            opt.textContent = `${sub.lang} (自动)`;
+            subtitleSelect.appendChild(opt);
+        });
+    }
 }
 
 function showVideoSections() {

@@ -180,3 +180,51 @@ def ytdlp_version():
     from ..utils.dependencies import get_ytdlp_version
     version = get_ytdlp_version()
     return jsonify({'version': version})
+
+@api_bp.route('/open_download_dir', methods=['POST'])
+def open_download_dir():
+    import subprocess
+    from ..tasks.manager import get_task_manager
+    tm = get_task_manager()
+    if not tm: return jsonify({'success': False, 'error': 'not initialized'})
+    try:
+        os.makedirs(tm.download_dir, exist_ok=True)
+        os.startfile(tm.download_dir)
+        return jsonify({'success': True, 'path': tm.download_dir})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@api_bp.route('/last_finished_file', methods=['GET'])
+def last_finished_file():
+    from ..tasks.manager import get_task_manager
+    tm = get_task_manager()
+    if not tm: return jsonify({'found': False, 'error': 'not initialized'})
+    
+    # Search backwards through tasks
+    for task_id in reversed(tm.task_order):
+        task = tm.tasks.get(task_id)
+        if task and task.status == 'finished' and task.file_path and os.path.exists(task.file_path):
+            return jsonify({'found': True, 'file': task.file_path})
+            
+    return jsonify({'found': False})
+
+@api_bp.route('/reveal_file', methods=['POST'])
+def reveal_file():
+    data = _safe_get_json(request)
+    name = data.get('name')
+    if not name: return jsonify({'success': False, 'error': 'no name'})
+    
+    import subprocess
+    from ..tasks.manager import get_task_manager
+    tm = get_task_manager()
+    if not tm: return jsonify({'success': False, 'error': 'not initialized'})
+    
+    target_path = os.path.join(tm.download_dir, name)
+    if os.path.exists(target_path):
+        import shlex
+        try:
+            subprocess.run(f'explorer /select,"{target_path}"', shell=True)
+            return jsonify({'success': True})
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)})
+    return jsonify({'success': False, 'error': 'file not found'})
