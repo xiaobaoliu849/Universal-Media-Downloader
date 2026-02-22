@@ -200,10 +200,10 @@ def last_finished_file():
     tm = get_task_manager()
     if not tm: return jsonify({'found': False, 'error': 'not initialized'})
     
-    # Search backwards through tasks
-    for task_id in reversed(tm.task_order):
-        task = tm.tasks.get(task_id)
-        if task and task.status == 'finished' and task.file_path and os.path.exists(task.file_path):
+    # Search backwards through tasks by updated_at
+    sorted_tasks = sorted(tm.tasks.values(), key=lambda t: t.updated_at, reverse=True)
+    for task in sorted_tasks:
+        if task.status == 'finished' and task.file_path and os.path.exists(task.file_path):
             return jsonify({'found': True, 'file': task.file_path})
             
     return jsonify({'found': False})
