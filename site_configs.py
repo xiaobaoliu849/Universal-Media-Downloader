@@ -1,8 +1,17 @@
 import os
 import random
 import logging
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
+
+def _site_origin(url: str, fallback: str) -> str:
+    parsed = urlparse(url or '')
+    scheme = parsed.scheme or 'https'
+    host = (parsed.hostname or '').strip().lower()
+    if not host:
+        return fallback
+    return f'{scheme}://{host}/'
 
 class SiteConfig:
     """Base configuration for site-specific settings"""
@@ -56,6 +65,7 @@ class SiteConfig:
 
         # --- MissAV Configuration ---
         if self.is_missav:
+            missav_origin = _site_origin(self.url, 'https://missav.ws/')
             # Impersonate Chrome to bypass Cloudflare
             settings['impersonate'] = 'chrome'
             settings['timeout'] = 15 if fast_mode else 90
@@ -69,7 +79,7 @@ class SiteConfig:
                 '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 '--add-header', 'Accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
                 '--add-header', 'Accept-Language:en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7',
-                '--add-header', 'Referer:https://missav.ws/', # Keep .ws as default for now, or make dynamic?
+                '--add-header', f'Referer:{missav_origin}',
                 '--add-header', 'Sec-Ch-Ua:"Chromium";v="120", "Google Chrome";v="120"',
                 '--add-header', 'Sec-Ch-Ua-Mobile:?0',
                 '--add-header', 'Sec-Fetch-Dest:document',
@@ -125,6 +135,7 @@ class SiteConfig:
             settings['fragment_retries'] = 5 if fast_mode else 10
             settings['args'] += [
                 '--retry-sleep', '3',
+                '--extractor-args', 'youtube:player_client=android,web',
                 '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
                 '--add-header', 'Accept-Language:en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7',
                 '--add-header', 'Referer:https://www.youtube.com/'
