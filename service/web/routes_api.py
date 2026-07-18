@@ -2,13 +2,64 @@ import os
 import logging
 import json
 import traceback
+import urllib.parse
 from flask import Blueprint, request, jsonify, Response
-from ..tasks.manager import get_task_manager
-from ..utils.common import validate_url, _safe_get_json
+from service.tasks.manager import get_task_manager
+from service.utils.common import validate_url, _safe_get_json
+from service.utils.cache import LRUCache, _get_inflight, _create_inflight, _publish_and_cleanup_inflight, _force_cleanup_inflight
 
 logger = logging.getLogger(__name__)
 
 api_bp = Blueprint('api', __name__, url_prefix='/api')
+
+# 全局 LRU 缓存实例：缓存容量为 100，生存周期 10 分钟 (600秒)
+info_lru_cache = LRUCache(max_size=100, ttl=600)
+
+
+def _is_storyboard_format(fmt: dict) -> bool:
+    format_id = str(fmt.get('format_id') or '').lower()
+    ext = str(fmt.get('ext') or '').lower()
+    protocol = str(fmt.get('protocol') or '').lower()
+    format_note = str(fmt.get('format_note') or '').lower()
+    vcodec = str(fmt.get('vcodec') or '').lower()
+    return (
+        format_id.startswith('sb')
+        or ext == 'mhtml'
+        or protocol == 'mhtml'
+        or 'storyboard' in format_note
+        or vcodec == 'images'
+    )
+
+
+def _is_playable_video_format(fmt: dict) -> bool:
+    if _is_storyboard_format(fmt):
+        return False
+    vcodec = str(fmt.get('vcodec') or '').lower()
+    return bool(vcodec and vcodec != 'none')
+
+
+def _video_format_score(fmt: dict) -> tuple:
+    """Prefer higher-bitrate video-only streams for per-height pairing."""
+    acodec = fmt.get('acodec')
+    protocol = (fmt.get('protocol') or '').lower()
+    ext = (fmt.get('ext') or '').lower()
+    dynamic_range = (fmt.get('dynamic_range') or '').lower()
+    return (
+        1 if acodec == 'none' else 0,
+        1 if protocol in ('https', 'http', 'dash', 'http_dash_segments') else 0,
+        1 if dynamic_range not in ('hdr', 'dv') else 0,
+        1 if ext == 'mp4' else 0,
+        float(fmt.get('tbr') or fmt.get('vbr') or 0),
+        int(fmt.get('fps') or 0),
+    )
+
+
+def _open_path_in_file_manager(path: str) -> None:
+    startfile = getattr(os, 'startfile', None)
+    if callable(startfile):
+        startfile(path)
+        return
+    raise RuntimeError('open_download_dir is only supported on Windows')
 
 @api_bp.route('/tasks', methods=['GET'])
 def list_tasks():
@@ -33,7 +84,7 @@ def add_task():
 
 @api_bp.route('/tasks/<task_id>/cancel', methods=['POST'])
 def cancel_task_route(task_id):
-    from ..tasks.manager import cancel_task as tm_cancel
+    from service.tasks.manager import cancel_task as tm_cancel
     if tm_cancel(task_id):
         return jsonify({'message': 'Task canceled'})
     return jsonify({'error': 'Task not found or already finished'}), 404
@@ -58,17 +109,104 @@ def api_info():
     if not url or not validate_url(url):
         return jsonify({'error': 'Invalid URL'}), 400
 
-    from ..tasks.downloader import _probe_info
-    from ..tasks.models import Task
+    # 1. 优先从 LRU 缓存获取已探测的视频信息
+    cached_info = info_lru_cache.get(url)
+    if cached_info:
+        logger.info(f"[API_INFO] 命中 LRU 缓存: {url}")
+        return jsonify(cached_info)
+
+    # 2. 尝试从 In-flight 队列中获取正在并发探测的相同请求，合并请求
+    inf = _get_inflight(url)
+    if inf:
+        logger.info(f"[API_INFO] 命中 In-flight 合并并发探测请求: {url}")
+        inf.waiters += 1
+        
+        # 探测超时时间，根据 URL 选择
+        from service.tasks.downloader import PROBE_TIMEOUT_DEFAULT, PROBE_TIMEOUT_TWITTER, PROBE_TIMEOUT_MISSAV
+        lower_url = url.lower()
+        is_missav = 'missav' in lower_url
+        is_twitter = 'twitter.com' in lower_url or 'x.com' in lower_url
+        timeout = PROBE_TIMEOUT_TWITTER if is_twitter else (PROBE_TIMEOUT_MISSAV if is_missav else PROBE_TIMEOUT_DEFAULT)
+        
+        # 阻塞等待前一个探测任务完成
+        finished = inf.event.wait(timeout=timeout)
+        if not finished:
+            return jsonify({'error': 'Probe request timed out due to concurrent wait'}), 504
+        if inf.error:
+            return jsonify(inf.error), 500
+        if inf.result:
+            return jsonify(inf.result)
+        return jsonify({'error': 'Concurrent request failed without details'}), 500
+
+    # 3. 未命中缓存且无并发请求，创建新的 In-flight 探测任务
+    inf = _create_inflight(url)
+    from service.tasks.downloader import _probe_info
+    from service.tasks.models import Task
 
     # 临时创建一个 Task 对象用于探测
     temp_task = Task(id='temp-probe', url=url)
     try:
         info = _probe_info(tm, temp_task)
+        
+        # 生成 quality_pairs 用于前端显示
+        quality_pairs = {}
+        if 'formats' in info and isinstance(info['formats'], list):
+            # 收集视频和音频格式
+            video_formats = {}  # height -> best format dict
+            audio_formats = []  # 音频格式列表
+            all_heights = []
+            
+            for fmt in info['formats']:
+                # 视频格式
+                if _is_playable_video_format(fmt):
+                    height = fmt.get('height')
+                    if height and isinstance(height, int) and height > 0:
+                        all_heights.append(height)
+                        best_existing = video_formats.get(height)
+                        if best_existing is None or _video_format_score(fmt) > _video_format_score(best_existing):
+                            video_formats[height] = fmt
+                
+                # 音频格式
+                if fmt.get('acodec') and fmt.get('acodec') != 'none' and not _is_playable_video_format(fmt):
+                    audio_formats.append(fmt)
+            
+            # 选择最佳音频格式
+            best_audio = None
+            if audio_formats:
+                # 按 abr (audio bitrate) 排序，选择最高的
+                audio_formats.sort(key=lambda f: f.get('abr', 0) or 0, reverse=True)
+                best_audio = audio_formats[0]['format_id']
+            
+            # 生成 quality_pairs
+            for height, video_fmt in video_formats.items():
+                if best_audio:
+                    quality_pairs[str(height)] = {
+                        'video': video_fmt['format_id'],
+                        'audio': best_audio
+                    }
+            if all_heights:
+                info['max_height'] = max(all_heights)
+                if info['max_height'] <= 360 and ('youtube.com' in url or 'youtu.be' in url):
+                    info['quality_warning'] = 'YouTube 当前只返回到 360p；这通常不是界面限制，而是账号 cookies、IP 或 PO Token 限制导致。'
+            logger.info(f"[API_INFO] playable_heights={sorted(set(all_heights), reverse=True)} quality_pairs={sorted(quality_pairs.keys(), key=int, reverse=True) if quality_pairs else []}")
+        
+        info['quality_pairs'] = quality_pairs
+        
+        # 缓存探测结果，并更新并发请求的状态，最后发布广播并自动清理
+        info_lru_cache.set(url, info)
+        inf.result = info
+        _publish_and_cleanup_inflight(url, inf)
         return jsonify(info)
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         logger.error(f"Probe failed: {e}")
-        return jsonify({'error': str(e)}), 500
+        
+        # 并发请求的异常结果同样进行广播并自动清理
+        err_payload = {'error': str(e)}
+        inf.error = err_payload
+        _publish_and_cleanup_inflight(url, inf)
+        return jsonify(err_payload), 500
 
 @api_bp.route('/stream_task')
 def stream_task():
@@ -177,26 +315,25 @@ def stream_task():
 
 @api_bp.route('/diag/ytdlp_version')
 def ytdlp_version():
-    from ..utils.dependencies import get_ytdlp_version
+    from service.utils.dependencies import get_ytdlp_version
     version = get_ytdlp_version()
     return jsonify({'version': version})
 
 @api_bp.route('/open_download_dir', methods=['POST'])
 def open_download_dir():
-    import subprocess
-    from ..tasks.manager import get_task_manager
+    from service.tasks.manager import get_task_manager
     tm = get_task_manager()
     if not tm: return jsonify({'success': False, 'error': 'not initialized'})
     try:
         os.makedirs(tm.download_dir, exist_ok=True)
-        os.startfile(tm.download_dir)
+        _open_path_in_file_manager(tm.download_dir)
         return jsonify({'success': True, 'path': tm.download_dir})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
 @api_bp.route('/last_finished_file', methods=['GET'])
 def last_finished_file():
-    from ..tasks.manager import get_task_manager
+    from service.tasks.manager import get_task_manager
     tm = get_task_manager()
     if not tm: return jsonify({'found': False, 'error': 'not initialized'})
     
@@ -215,7 +352,7 @@ def reveal_file():
     if not name: return jsonify({'success': False, 'error': 'no name'})
     
     import subprocess
-    from ..tasks.manager import get_task_manager
+    from service.tasks.manager import get_task_manager
     tm = get_task_manager()
     if not tm: return jsonify({'success': False, 'error': 'not initialized'})
     

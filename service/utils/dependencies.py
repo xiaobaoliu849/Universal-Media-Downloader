@@ -28,7 +28,15 @@ def get_ffmpeg_path():
     candidates.append(config.FFMPEG_BUNDLED_PATH)
     # 2) 与可执行文件同级目录下的 ffmpeg/bin/ffmpeg.exe (处理 resource_path 失效或目录被复制走的情况)
     try:
-        exe_dir = os.path.dirname(sys.executable if getattr(sys, 'frozen', False) else os.path.abspath(sys.modules['__main__'].__file__))
+        if getattr(sys, 'frozen', False):
+            exe_dir = os.path.dirname(sys.executable)
+        else:
+            main_mod = sys.modules.get('__main__')
+            main_file = getattr(main_mod, '__file__', None)
+            if isinstance(main_file, str) and main_file:
+                exe_dir = os.path.dirname(os.path.abspath(main_file))
+            else:
+                exe_dir = os.path.dirname(sys.executable)
         candidates.append(os.path.join(exe_dir, 'ffmpeg', 'bin', 'ffmpeg.exe'))
         candidates.append(os.path.join(exe_dir, 'ffmpeg', 'ffmpeg.exe'))
     except Exception:
@@ -36,7 +44,8 @@ def get_ffmpeg_path():
     # 3) 尝试 _MEIPASS 路径 (one-file 解包)
     if hasattr(sys, '_MEIPASS'):
         mp = getattr(sys, '_MEIPASS')
-        candidates.append(os.path.join(mp, 'ffmpeg', 'bin', 'ffmpeg.exe'))
+        if isinstance(mp, str) and mp:
+            candidates.append(os.path.join(mp, 'ffmpeg', 'bin', 'ffmpeg.exe'))
     # 4) PATH 中的 ffmpeg
     candidates.append(config.FFMPEG_SYSTEM_PATH)
 

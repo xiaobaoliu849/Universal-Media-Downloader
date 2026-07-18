@@ -171,3 +171,20 @@ tmpclaude-*/
 __pycache__/
 *.pyc
 *$py.class
+
+# App specific
+release/
+build_meta.json
+cookies.txt
+cookies_backup.txt
+*cookies.txt
+.venv-build/
+*.exe.bak
+*.exe.old
+output.json
+output.txt
+output_b.txt
+微信图片_*.png
+yt-dlp-plugins-disabled/
+pyrefly.toml
+tools/

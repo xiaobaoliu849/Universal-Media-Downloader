@@ -1,6 +1,6 @@
 {
   "include": ["."],
-  "exclude": ["dist", "build", "release", "*.stale_*", ".venv"],
+  "exclude": ["dist", "build", "release", "*.stale_*", ".venv", "yt-dlp-plugins-disabled"],
   "reportMissingImports": true,
   "reportMissingTypeStubs": false,
   // Plan A: minimize noise from stdlib/internal library analysis (e.g., ctypes) while preserving project checks

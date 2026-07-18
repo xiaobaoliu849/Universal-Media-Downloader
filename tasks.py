@@ -435,7 +435,7 @@ class TaskManager:
 
         # ---------- 构建与执行下载（更稳的默认 + 自动降级 + aria2c 兜底） ----------
         # ---------- 构建与执行下载（更稳的默认 + 自动降级 + aria2c 兜底） ----------
-        def build_args(conc: int, chunk: str, use_aria: bool=False, extra_args: List[str]=None, 
+        def build_args(conc: int, chunk: str, use_aria: bool=False, extra_args: Optional[List[str]]=None, 
                        timeout: int=15, retries: int=20, fragment_retries: int=50, retry_sleep: int=2) -> List[str]:
             # 确保所有参数都是字符串类型
             format_selector_str = str(format_selector) if format_selector is not None else 'best'

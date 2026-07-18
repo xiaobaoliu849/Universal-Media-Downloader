@@ -241,8 +241,8 @@ if _legacy:
 
 # --- 网络与服务器设置 ---
 
-# Flask 服务器监听的端口 (默认 5001，可用环境变量 UMD_PORT 覆盖)
-SERVER_PORT = 5001
+# Flask 服务器监听的端口 (默认 5101，可用环境变量 UMD_PORT 覆盖)
+SERVER_PORT = 5101
 
 # 可选全局代理（供 yt-dlp 使用），例如 http://127.0.0.1:7890 。
 # 通过环境变量 UMD_PROXY 指定；为空则不加 --proxy 参数。

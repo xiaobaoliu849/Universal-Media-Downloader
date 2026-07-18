@@ -5,8 +5,11 @@
     <meta charset="utf-8">
     <!-- Favicon 修复：项目中不存在 favicon.svg/favicon.ico，使用 icon.ico 与 SVG 主 Logo -->
     <link rel="icon" type="image/x-icon" href="/static/icon.ico">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
     <link rel="alternate icon" type="image/svg+xml" href="/static/video_downloader_logo.svg">
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/style.css?v={{ static_version }}">
 </head>
 <body>
     <div class="container">
@@ -14,7 +17,10 @@
         <div class="header">
             <div class="header-content">
                 <img src="/static/video_downloader_logo.svg" class="logo" alt="Universal Media Downloader Logo">
-                <h1>Universal Media Downloader</h1>
+                <div class="title-block">
+                    <h1>Universal Media Downloader</h1>
+                </div>
+                <button id="themeToggleBtn" class="theme-toggle-btn" aria-label="切换主题">🌙</button>
             </div>
         </div>
 
@@ -30,6 +36,7 @@
                 <p id="videoDetails">详细信息</p>
             </div>
 
+            <!-- 下载模式与主下载按钮 -->
             <div class="options-row">
                 <div class="option-group">
                     <div class="radio-group">
@@ -56,23 +63,24 @@
                 </div>
             </div>
 
-            <!-- 元数据开关：简单，不占主视图宽度 -->
-            <div style="margin: -10px 0 20px 0; font-size:13px; color:#374151; text-align:left;">
-                <label style="cursor:pointer; display:inline-flex; align-items:center; gap:6px;">
-                    <input type="checkbox" id="metaToggle" style="transform:scale(1.1);" />
+            <!-- 配置开关面板 -->
+            <div class="settings-group">
+                <label>
+                    <input type="checkbox" id="metaToggle" />
                     <span>生成元数据 (meta.json)</span>
                 </label>
-                <label style="cursor:pointer; display:inline-flex; align-items:center; gap:6px; margin-left:18px;">
-                    <input type="checkbox" id="fastStartToggle" checked style="transform:scale(1.1);" />
+                <label>
+                    <input type="checkbox" id="fastStartToggle" checked />
                     <span>⚡ 快速启动(跳过初始探测)</span>
                 </label>
-                <label style="cursor:pointer; display:inline-flex; align-items:center; gap:6px; margin-left:18px;">
-                    <input type="checkbox" id="thumbnailToggle" style="transform:scale(1.1);" />
+                <label>
+                    <input type="checkbox" id="thumbnailToggle" />
                     <span>🖼️ 下载封面图</span>
                 </label>
-                <span id="fastStartHint" style="margin-left:10px; color:#9ca3af;">(需先获取一次视频信息)</span>
+                <span id="fastStartHint">(需先获取一次视频信息)</span>
             </div>
 
+            <!-- 质量选择区域 -->
             <div class="options-row quality-section" id="qualitySection">
                 <div class="option-group">
                     <label for="quality">质量选择</label>
@@ -144,6 +152,6 @@
         <div class="start-text">输入链接以开始</div>
     </div>
 
-    <script src="/static/main.js"></script>
+    <script src="/static/main.js?v={{ static_version }}"></script>
 </body>
 </html>

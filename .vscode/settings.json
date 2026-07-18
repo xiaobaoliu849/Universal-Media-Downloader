@@ -1,10 +1,18 @@
 {
-  "python.defaultInterpreterPath": "python",
+  "python.defaultInterpreterPath": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
   // 提示 Pylance 在工作区根查找本地模块
   "python.analysis.extraPaths": [
     "./"
   ],
+  "python.analysis.exclude": [
+    "**/yt-dlp-plugins-disabled/**"
+  ],
+  "python.analysis.ignore": [
+    "**/yt-dlp-plugins-disabled/**"
+  ],
   "python.analysis.diagnosticMode": "workspace",
+  "python.pyrefly.diagnosticMode": "workspace",
+  "python.pyrefly.displayTypeErrors": "default",
   // 可选：显式关闭严格类型（如果大量第三方缺少 stub）
   // "python.analysis.typeCheckingMode": "basic",
   // 若你使用自定义 .env，可在此定义（可选）

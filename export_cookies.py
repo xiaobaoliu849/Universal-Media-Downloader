@@ -29,7 +29,7 @@ def export_cookies_from_browser():
                 sys.executable, '-m', 'yt_dlp',
                 '--cookies-from-browser', browser_name,
                 '--no-download',
-                '--dump-cookies',
+                '--cookies', str(Path(__file__).parent / 'cookies.txt'),
                 'https://www.youtube.com/'
             ]
             

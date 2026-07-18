@@ -6,6 +6,160 @@ const MAX_LOG_LINES = 500;
 let isFetchingInfo = false;  // 防止重复请求
 let lastFetchedUrl = '';     // 记录上次请求的URL
 
+// --- Theme Toggle & UI Transition Patcher ---
+(function() {
+    // 1. 初始化与切换主题
+    const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    document.documentElement.setAttribute('data-theme', savedTheme);
+
+    function updateThemeBtn(theme) {
+        const btn = document.getElementById('themeToggleBtn');
+        if (btn) {
+            btn.innerHTML = theme === 'dark' ? '☀️' : '🌙';
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        updateThemeBtn(savedTheme);
+        const btn = document.getElementById('themeToggleBtn');
+        if (btn) {
+            btn.addEventListener('click', () => {
+                const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
+                const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+                document.documentElement.setAttribute('data-theme', newTheme);
+                localStorage.setItem('theme', newTheme);
+                updateThemeBtn(newTheme);
+            });
+        }
+    });
+
+    // 2. Toast 提示框系统
+    window.showToast = function(message, type = 'error') {
+        let container = document.getElementById('toastContainer');
+        if (!container) {
+            container = document.createElement('div');
+            container.id = 'toastContainer';
+            container.className = 'toast-container';
+            document.body.appendChild(container);
+        }
+        const toast = document.createElement('div');
+        toast.className = `toast toast-${type}`;
+        const icons = { success: '✅', error: '❌', warning: '⚠️', info: 'ℹ️' };
+        toast.innerHTML = `
+            <span class="toast-icon">${icons[type] || ''}</span>
+            <span class="toast-message">${message}</span>
+            <button class="toast-close-btn">&times;</button>
+        `;
+        container.appendChild(toast);
+        toast.querySelector('.toast-close-btn').addEventListener('click', () => {
+            toast.classList.add('toast-leave');
+            toast.addEventListener('transitionend', () => toast.remove());
+        });
+        setTimeout(() => { toast.classList.add('toast-enter-active'); }, 10);
+        setTimeout(() => {
+            if (toast.parentNode) {
+                toast.classList.add('toast-leave');
+                toast.addEventListener('transitionend', () => toast.remove());
+            }
+        }, 4000);
+    };
+
+    // 3. 动画显示/隐藏辅助函数
+    window.showElement = function(el) {
+        if (!el) return;
+        el.style.setProperty('display', 'block', 'important');
+        el.offsetHeight; // trigger reflow
+        el.classList.add('show');
+    };
+
+    window.hideElement = function(el) {
+        if (!el) return;
+        el.classList.remove('show');
+        const onTransitionEnd = () => {
+            if (!el.classList.contains('show')) {
+                el.style.setProperty('display', 'none', 'important');
+            }
+            el.removeEventListener('transitionend', onTransitionEnd);
+        };
+        el.addEventListener('transitionend', onTransitionEnd);
+    };
+
+    // 4. 拦截原生的 DOM 操作，注入微动效与 Toast
+    const originalGetElementById = document.getElementById;
+    document.getElementById = function(id) {
+        const el = originalGetElementById.apply(document, arguments);
+        if (el && !el._patched) {
+            if (id === 'error-message' || id === 'videoInfo' || id === 'progress') {
+                el._patched = true;
+                let displayVal = el.style.display || 'none';
+                Object.defineProperty(el.style, 'display', {
+                    get() { return displayVal; },
+                    set(val) {
+                        displayVal = val;
+                        if (val === 'block' || val === 'flex' || val === '') {
+                            window.showElement(el);
+                            if (id === 'error-message' && el.textContent) {
+                                window.showToast(el.textContent, 'error');
+                            }
+                        } else if (val === 'none') {
+                            window.hideElement(el);
+                        } else {
+                            el.style.setProperty('display', val);
+                        }
+                    }
+                });
+            } else if (id === 'statusText') {
+                el._patched = true;
+                let val = el.textContent || '';
+                Object.defineProperty(el, 'textContent', {
+                    get() { return val; },
+                    set(newVal) {
+                        val = newVal;
+                        el.innerText = newVal;
+                        const progressFill = document.querySelector('.progress-fill');
+                        if (progressFill) {
+                            if (newVal === '完成') {
+                                progressFill.classList.add('finished');
+                                window.showToast('下载完成！文件已保存', 'success');
+                            } else if (newVal === '队列中' || newVal === '下载中' || newVal === '合并处理中') {
+                                progressFill.classList.remove('finished');
+                            }
+                        }
+                    }
+                });
+            }
+        }
+        return el;
+    };
+
+    const originalQuerySelector = document.querySelector;
+    document.querySelector = function(selector) {
+        const el = originalQuerySelector.apply(document, arguments);
+        if (selector === '.download-btn' && el && !el._patched) {
+            el._patched = true;
+            let disabledVal = el.disabled;
+            Object.defineProperty(el, 'disabled', {
+                get() { return disabledVal; },
+                set(val) {
+                    disabledVal = val;
+                    el.style.setProperty('pointer-events', val ? 'none' : 'auto');
+                    if (val) {
+                        el.classList.add('pulse-glow');
+                    } else {
+                        el.classList.remove('pulse-glow');
+                    }
+                    if (val) {
+                        el.setAttribute('disabled', 'true');
+                    } else {
+                        el.removeAttribute('disabled');
+                    }
+                }
+            });
+        }
+        return el;
+    };
+})();
+
 // 当URL输入框失去焦点时，获取视频信息
 document.getElementById('videoUrl').addEventListener('blur', function () {
     const url = this.value.trim();

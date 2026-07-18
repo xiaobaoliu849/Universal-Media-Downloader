@@ -21,6 +21,8 @@ logger = logging.getLogger(__name__)
 PROBE_TIMEOUT_DEFAULT = 40
 PROBE_TIMEOUT_TWITTER = 55
 PROBE_TIMEOUT_MISSAV = 180
+YOUTUBE_PROBE_EXTRACTOR_ARGS = 'youtube:player_client=default;formats=missing_pot'
+YOUTUBE_RICH_EXTRACTOR_ARGS = 'youtube:player_client=default'
 
 _YTDLP_PLUGIN_DIR_CACHE = None
 
@@ -70,6 +72,11 @@ def _replace_option_value(args: list[str], option: str, value: str) -> list[str]
     if not changed:
         replaced.extend([option, value])
     return replaced
+
+def _strip_cookie_source_args(args: list[str]) -> list[str]:
+    stripped = _strip_option_with_value(args, '--cookies-from-browser')
+    stripped = _strip_option_with_value(stripped, '--cookies')
+    return stripped
 
 def _browser_cookie_candidates(preferred: Optional[str] = None) -> list[str]:
     env_browser = (os.environ.get('LUMINA_COOKIE_BROWSER') or os.environ.get('UMD_COOKIE_BROWSER') or '').strip().lower()
@@ -256,6 +263,14 @@ def _force_browser_cookies_enabled() -> bool:
         in ('1', 'true', 'yes')
     )
 
+def _wants_specific_youtube_quality(task: Task) -> bool:
+    q = str(getattr(task, 'quality', '') or '').lower()
+    if not q or q in ('best', 'auto', 'fast'):
+        return False
+    if 'height<=' in q:
+        return True
+    return q in ('best4k', 'best8k', '640p')
+
 def _has_usable_cookiefile(url: str, cookie_file: str) -> bool:
     if not cookie_file or not os.path.exists(cookie_file):
         return False
@@ -362,6 +377,8 @@ def _probe_info(manager: Any, task: Task) -> Dict[str, Any]:
     if task.geo_bypass:
         cmd.append('--geo-bypass')
 
+    fast_info = os.environ.get('LUMINA_FAST_INFO', '').lower() in ('1', 'true', 'yes')
+
     if is_missav:
         missav_origin = _missav_origin(resolved_url)
         plugin_dir = _find_ytdlp_plugin_dir()
@@ -370,9 +387,11 @@ def _probe_info(manager: Any, task: Task) -> Dict[str, Any]:
         else:
             logger.info('[PROBE] missav 未加载本地 yt-dlp 插件目录，继续使用内置提取器')
 
+        missav_timeout = '30' if fast_info else '120'
+        missav_retries = '3' if fast_info else '8'
         cmd += ['--impersonate', 'chrome',
                 '--force-ipv4',
-                '--socket-timeout', '120', '--extractor-retries', '8',
+                '--socket-timeout', missav_timeout, '--extractor-retries', missav_retries,
                 '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 '--add-header', 'Accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
                 '--add-header', 'Accept-Language:en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7',
@@ -383,13 +402,19 @@ def _probe_info(manager: Any, task: Task) -> Dict[str, Any]:
                 '--add-header', 'Sec-Fetch-Mode:navigate',
                 '--add-header', 'Sec-Fetch-Site:same-origin',
                 '--add-header', 'Upgrade-Insecure-Requests:1']
-        logger.info('[PROBE] missav 探测 - 添加 Cloudflare 绕过参数 (--impersonate chrome)')
+        logger.info(f'[PROBE] missav 探测 - 添加 Cloudflare 绕过参数 (--impersonate chrome, timeout={missav_timeout}, retries={missav_retries})')
 
     if is_youtube:
-        # YouTube 特殊处理：android 客户端不支持 cookies
-        # 策略：使用 android 客户端，不添加 cookies
-        cmd += ['--extractor-args', 'youtube:player_client=android']
-        logger.info('[PROBE] YouTube: 使用 android 客户端（绕过 n challenge）')
+        # YouTube 探测尽量贴近 yt-dlp 官方默认客户端组合，并显式保留 missing_pot 格式，
+        # 这样可以判断“当前视频是否存在更高分辨率，只是需要 PO Token”。
+        cmd += ['--extractor-args', YOUTUBE_PROBE_EXTRACTOR_ARGS]
+        logger.info(f'[PROBE] YouTube: 使用默认客户端组合探测 ({YOUTUBE_PROBE_EXTRACTOR_ARGS})')
+
+    if fast_info and not is_missav:
+        socket_timeout = os.environ.get('INFO_SOCKET_TIMEOUT') or '15'
+        extractor_retries = os.environ.get('INFO_EXTRACTOR_RETRIES') or '2'
+        cmd += ['--socket-timeout', socket_timeout, '--extractor-retries', extractor_retries]
+        logger.info(f"[PROBE] 快速模式启用: socket-timeout={socket_timeout}, extractor-retries={extractor_retries}")
 
     selected_cookie_file = _select_cookie_file(resolved_url, manager.cookies_file)
     prefer_browser = _force_browser_cookies_enabled()
@@ -397,11 +422,13 @@ def _probe_info(manager: Any, task: Task) -> Dict[str, Any]:
                    and not getattr(task, 'subtitles_only', False))
     browser_cookie = _choose_browser_cookie_source(task) if try_browser else None
 
-    # YouTube 使用 android 客户端时不添加 cookies（android 不支持 cookies）
+    # YouTube 的 probe 默认先不带 cookies。
+    # 近年的 YouTube/yt-dlp 组合里，带登录 cookies 反安经常只返回 360p 那组格式。
+    # 真遇到登录/年龄限制时再回退到 cookies 探测。
     skip_cookies_for_youtube = is_youtube
 
     if skip_cookies_for_youtube:
-        logger.info("[PROBE] YouTube android 模式：跳过 cookies")
+        logger.info("[PROBE] YouTube probe 默认跳过 cookies")
     elif try_browser:
         cmd += ['--cookies-from-browser', browser_cookie or 'chrome']
         if selected_cookie_file and not _cookiefile_has_site_cookie(selected_cookie_file, resolved_url):
@@ -417,7 +444,10 @@ def _probe_info(manager: Any, task: Task) -> Dict[str, Any]:
         else:
             logger.info("[PROBE] 未使用 cookies (无可用站点 cookies)")
 
-    timeout_probe = PROBE_TIMEOUT_TWITTER if is_twitter else (PROBE_TIMEOUT_MISSAV if is_missav else PROBE_TIMEOUT_DEFAULT)
+    if fast_info:
+        timeout_probe = 20 if not is_missav else 45
+    else:
+        timeout_probe = PROBE_TIMEOUT_TWITTER if is_twitter else (PROBE_TIMEOUT_MISSAV if is_missav else PROBE_TIMEOUT_DEFAULT)
 
     def _run_probe(current_cmd: List[str]) -> subprocess.CompletedProcess:
         final_cmd = current_cmd + [resolved_url]
@@ -434,6 +464,12 @@ def _probe_info(manager: Any, task: Task) -> Dict[str, Any]:
             raise RuntimeError("yt-dlp 返回 null")
         if not isinstance(result, dict):
             raise RuntimeError(f"yt-dlp 返回了非对象 JSON: {type(result).__name__}")
+        if is_youtube and isinstance(result.get('formats'), list):
+            heights = sorted({
+                int(fmt.get('height')) for fmt in result['formats']
+                if isinstance(fmt, dict) and isinstance(fmt.get('height'), int) and fmt.get('height') > 0
+            }, reverse=True)
+            logger.info(f"[PROBE] YouTube 返回高度: {heights[:12]}")
         return result
 
     probe_cmd = cmd
@@ -486,6 +522,30 @@ def _probe_info(manager: Any, task: Task) -> Dict[str, Any]:
         logger.warning('[PROBE] 代理连接失败，回退直连重试一次')
         probe_cmd = _strip_option_with_value(probe_cmd, '--proxy')
         r = _run_probe(probe_cmd)
+        if r.returncode == 0:
+            return _parse_probe(r)
+        err_text = (r.stderr or r.stdout or err_text)
+
+    if is_youtube and _is_youtube_signin_error([err_text]):
+        logger.warning('[PROBE] YouTube 需要鉴权，改用 cookies/default client 重试一次')
+        auth_probe_cmd = _strip_cookie_source_args(_strip_youtube_extractor_args(cmd))
+        auth_probe_cmd += ['--extractor-args', YOUTUBE_PROBE_EXTRACTOR_ARGS]
+        if try_browser:
+            auth_probe_cmd += ['--cookies-from-browser', browser_cookie or 'chrome']
+        elif selected_cookie_file:
+            auth_probe_cmd += ['--cookies', selected_cookie_file]
+        r = _run_probe(auth_probe_cmd)
+        if r.returncode == 0:
+            if '--cookies-from-browser' in auth_probe_cmd:
+                setattr(task, 'cookie_browser', browser_cookie or 'chrome')
+            return _parse_probe(r)
+        err_text = (r.stderr or r.stdout or err_text)
+
+    if is_youtube:
+        logger.warning('[PROBE] YouTube default client 探测失败，回退 android client 重试一次')
+        android_probe_cmd = _strip_cookie_source_args(_strip_youtube_extractor_args(probe_cmd))
+        android_probe_cmd += ['--extractor-args', 'youtube:player_client=android']
+        r = _run_probe(android_probe_cmd)
         if r.returncode == 0:
             return _parse_probe(r)
         err_text = (r.stderr or r.stdout or err_text)
@@ -665,13 +725,13 @@ def _execute_media_download(manager: Any, task: Task, base_template: str):
         if m_loc == 'video_only':
             if q_loc == 'best8k': return 'bestvideo[height<=?4320]/bestvideo'
             if q_loc == 'best4k': return 'bestvideo[height<=?2160]/bestvideo'
-            if q_loc in ('best','auto'): return 'bestvideo[height<=?1080]/bestvideo'
+            if q_loc in ('best','auto'): return 'bestvideo/best'
             if q_loc == '640p': return 'bestvideo[height<=?640]/bestvideo'
             return 'bestvideo[height<=?720]/bestvideo'
 
         if q_loc == 'best8k': return 'bestvideo[height<=4320]+bestaudio/best'
         if q_loc == 'best4k': return 'bestvideo[height<=2160]+bestaudio/best'
-        if q_loc in ('best','auto'): return 'bestvideo[height<=1080]+bestaudio/best'
+        if q_loc in ('best','auto'): return 'bestvideo+bestaudio/best'
         if q_loc == 'fast': return 'bestvideo[height<=720]+bestaudio/best'
         if q_loc == '640p': return 'bestvideo[height<=640]+bestaudio/best'
         return 'best'
@@ -728,12 +788,18 @@ def _execute_media_download(manager: Any, task: Task, base_template: str):
         )
         if force_browser_cookies:
             use_browser_cookies = True
+        prefer_rich_youtube_client = bool(direct_selector) or _wants_specific_youtube_quality(task)
         if is_youtube:
             a = _strip_youtube_extractor_args(a)
         if is_youtube and not youtube_auth_with_cookies:
-            a += ['--extractor-args', 'youtube:player_client=android']
-            task.log.append('[youtube] 使用 android client（下载阶段）')
-            logger.info(f"[YOUTUBE] Task {task.id}: 使用 android client，跳过 cookies")
+            if prefer_rich_youtube_client:
+                a += ['--extractor-args', YOUTUBE_RICH_EXTRACTOR_ARGS]
+                task.log.append('[youtube] 使用 default client（优先保留完整格式）')
+                logger.info(f"[YOUTUBE] Task {task.id}: 使用 default client 以匹配前端质量列表")
+            else:
+                a += ['--extractor-args', 'youtube:player_client=android']
+                task.log.append('[youtube] 使用 android client（下载阶段）')
+                logger.info(f"[YOUTUBE] Task {task.id}: 使用 android client，跳过 cookies")
         elif is_youtube:
             task.log.append('[youtube] 切换 cookies 鉴权模式（关闭 android client）')
             logger.info(f"[YOUTUBE] Task {task.id}: 切换 cookies 鉴权模式")
@@ -741,7 +807,7 @@ def _execute_media_download(manager: Any, task: Task, base_template: str):
                 a += ['--extractor-args', 'youtube:player_client=tv,web']
                 task.log.append('[youtube] 使用 tv client（cookies 模式）')
             else:
-                a += ['--extractor-args', 'youtube:player_client=web,web_safari']
+                a += ['--extractor-args', YOUTUBE_RICH_EXTRACTOR_ARGS]
             if use_browser_cookies:
                 browser = _choose_browser_cookie_source(task)
                 a += ['--cookies-from-browser', browser]
@@ -792,7 +858,7 @@ def _execute_media_download(manager: Any, task: Task, base_template: str):
             '--no-warnings', '--no-check-certificate', '--newline', '--ignore-errors',
             '--socket-timeout', str(to_timeout), '--retries', str(to_retries),
             '-o', out_path_template,
-            '--extractor-args', 'youtube:player_client=tv,web'
+            '--extractor-args', YOUTUBE_RICH_EXTRACTOR_ARGS
         ]
         a = _with_plugin_dir_args(a)
         if explicit_format:
@@ -1019,7 +1085,15 @@ def _execute_media_download(manager: Any, task: Task, base_template: str):
                                          timeout=to_timeout), '[speed] 内置下载器降级重试 (并发=2, 块=8M, IPv4)')
 
     if rc != 0 and _has_ssl_eof(recent):
-        if manager.aria2c_path:
+        # YouTube 使用时效性 URL token，aria2c 多连接分段会导致部分 URL 过期而失败
+        # 对 YouTube 改为单连接（并发=1）+ 超长 socket-timeout + 高重试次数的保守策略
+        if is_youtube:
+            task.log.append('[net] YouTube SSLEOF 仍失败，切换单连接保守模式重试（避免 aria2c URL 过期问题）…')
+            rc, recent = run_once(build_args(1, '4M', use_aria=False, extra_args=extra_download_args,
+                                             force_no_proxy=proxy_failed, youtube_auth_with_cookies=youtube_auth_with_cookies, force_browser_cookies=force_browser_cookies, youtube_tv_client=youtube_tv_client,
+                                             timeout=60, retries=20, fragment_retries=50, retry_sleep=5),
+                                  '[speed] YouTube 单连接保守重试 (并发=1, 超时=60s)')
+        elif manager.aria2c_path:
             task.log.append('[net] 仍失败，切换 aria2c 兜底重试…')
             rc, recent = run_once(build_args(2, '8M', use_aria=True, extra_args=extra_download_args,
                                              force_no_proxy=proxy_failed, youtube_auth_with_cookies=youtube_auth_with_cookies, force_browser_cookies=force_browser_cookies, youtube_tv_client=youtube_tv_client,
@@ -1262,13 +1336,23 @@ def _fill_media_metadata(manager: Any, task: Task):
     fields = {}
     try:
         # Width/Height/Vcodec
-        vc_cmd = [probe_bin, '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height,codec_name', '-of', 'default=noprint_wrappers=1:nokey=1', fp]
+        # 用 JSON 读取，避免 ffprobe 文本输出字段顺序不稳定导致把 width 当成 height。
+        vc_cmd = [probe_bin, '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height,codec_name', '-of', 'json', fp]
         p = subprocess.run(vc_cmd, capture_output=True, text=True, encoding='utf-8', errors='ignore', timeout=10, creationflags=CREATE_NO_WINDOW)
-        vals = [v.strip() for v in (p.stdout or '').strip().split('\n') if v.strip()]
-        if len(vals) >= 3:
-            if vals[0].isdigit(): fields['width'] = int(vals[0])
-            if vals[1].isdigit(): fields['height'] = int(vals[1])
-            fields['vcodec'] = vals[2]
+        if p.returncode == 0 and p.stdout.strip():
+            probe_data = json.loads(p.stdout)
+            streams = probe_data.get('streams') if isinstance(probe_data, dict) else None
+            if isinstance(streams, list) and streams:
+                first_stream = streams[0] if isinstance(streams[0], dict) else {}
+                width_val = first_stream.get('width')
+                height_val = first_stream.get('height')
+                codec_val = first_stream.get('codec_name')
+                if isinstance(width_val, int) and width_val > 0:
+                    fields['width'] = width_val
+                if isinstance(height_val, int) and height_val > 0:
+                    fields['height'] = height_val
+                if isinstance(codec_val, str) and codec_val:
+                    fields['vcodec'] = codec_val
 
         # Acodec
         ac_cmd = [probe_bin, '-v', 'error', '-select_streams', 'a:0', '-show_entries', 'stream=codec_name', '-of', 'default=noprint_wrappers=1:nokey=1', fp]
