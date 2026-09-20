@@ -35,6 +35,11 @@ class SiteConfig:
     def is_adult_site(self) -> bool:
         return any(domain in self.lower_url for domain in ['pornhub.com', 'xvideos.com', 'xnxx.com', 'youporn.com'])
 
+    @property
+    def is_douyin(self) -> bool:
+        return 'douyin.com' in self.lower_url or 'iesdouyin.com' in self.lower_url or 'tiktok.com' in self.lower_url
+
+
     def get_download_args(self, fast_mode: bool = False, extended: bool = False, primary: bool = False) -> dict:
         """
         Returns a dictionary of arguments for yt-dlp:
@@ -155,6 +160,16 @@ class SiteConfig:
                      '--add-header', 'Origin:https://www.youtube.com',
                      '--sleep-interval', '3', '--max-sleep-interval', '7'
                  ]
+
+        # --- Douyin/TikTok Configuration ---
+        elif self.is_douyin:
+            settings['timeout'] = 25
+            settings['retries'] = 3
+            settings['args'] += [
+                '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                '--add-header', 'Referer:https://www.douyin.com/',
+                '--add-header', 'Accept-Language:zh-CN,zh;q=0.9,en;q=0.8',
+            ]
 
         return settings
 

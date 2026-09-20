@@ -175,9 +175,8 @@ __pycache__/
 # App specific
 release/
 build_meta.json
-cookies.txt
-cookies_backup.txt
-*cookies.txt
+cookies*.txt
+*cookies*.txt
 .venv-build/
 *.exe.bak
 *.exe.old

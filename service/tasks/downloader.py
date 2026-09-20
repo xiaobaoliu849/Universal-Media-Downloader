@@ -6,6 +6,7 @@ import time
 import logging
 import subprocess
 import traceback
+import shutil
 from typing import Dict, List, Any, Optional
 from urllib.parse import urlparse, urlunparse
 
@@ -13,6 +14,7 @@ from .models import Task
 from ..utils.errors import classify_error
 from ..utils.subtitles import normalize_srt_inplace
 from ..utils.dependencies import CREATE_NO_WINDOW
+from ..utils.isaac64 import decrypt_channel_video
 import site_configs
 
 logger = logging.getLogger(__name__)
@@ -25,6 +27,26 @@ YOUTUBE_PROBE_EXTRACTOR_ARGS = 'youtube:player_client=default;formats=missing_po
 YOUTUBE_RICH_EXTRACTOR_ARGS = 'youtube:player_client=default'
 
 _YTDLP_PLUGIN_DIR_CACHE = None
+_JS_RUNTIME_CACHE = None
+
+def _get_js_runtime_args() -> List[str]:
+    """Detect Node.js or Deno on system to evaluate YouTube JS challenges."""
+    global _JS_RUNTIME_CACHE
+    if _JS_RUNTIME_CACHE is not None:
+        return list(_JS_RUNTIME_CACHE)
+
+    node_path = shutil.which('node')
+    if node_path:
+        _JS_RUNTIME_CACHE = ['--js-runtimes', 'node']
+        return list(_JS_RUNTIME_CACHE)
+
+    deno_path = shutil.which('deno')
+    if deno_path:
+        _JS_RUNTIME_CACHE = ['--js-runtimes', 'deno']
+        return list(_JS_RUNTIME_CACHE)
+
+    _JS_RUNTIME_CACHE = []
+    return []
 
 def _is_impersonate_unavailable_text(text: str) -> bool:
     t = (text or '').lower()
@@ -353,12 +375,34 @@ def execute_download(manager: Any, task: Task):
     _execute_media_download(manager, task, base_template)
 
 def _probe_info(manager: Any, task: Task) -> Dict[str, Any]:
+    if 'findermp.video.qq.com' in task.url.lower() or 'decodekey=' in task.url.lower() or 'decode_key=' in task.url.lower():
+        logger.info(f"[PROBE] 拦截到微信视频号 URL: {task.url}，返回模拟视频元数据")
+        return {
+            'title': '微信视频号加密视频 (WeChat Channel Video)',
+            'extractor': 'wechat_channels',
+            'extractor_key': 'WechatChannels',
+            'webpage_url': task.url,
+            'formats': [
+                {
+                    'format_id': 'best',
+                    'height': 1080,
+                    'ext': 'mp4',
+                    'vcodec': 'h264',
+                    'acodec': 'aac',
+                }
+            ],
+            'max_height': 1080
+        }
+
     resolved_url = _normalize_missav_url_by_cookie(task.url, _select_cookie_file(task.url, manager.cookies_file))
     if resolved_url != task.url:
         logger.info(f"[PROBE] MissAV URL 按 cookie 域名切换为: {resolved_url}")
 
     cmd = [str(manager.ytdlp_path), '--skip-download', '--dump-single-json', '--no-warnings', '--no-check-certificate']
     cmd = _with_plugin_dir_args(cmd)
+    js_args = _get_js_runtime_args()
+    if js_args:
+        cmd += js_args
 
     # Proxy logic
     try:
@@ -550,6 +594,9 @@ def _probe_info(manager: Any, task: Task) -> Dict[str, Any]:
             return _parse_probe(r)
         err_text = (r.stderr or r.stdout or err_text)
 
+    if is_missav and ('403' in err_text or 'Forbidden' in err_text):
+        raise RuntimeError('MissAV 提示 403 Forbidden（Cloudflare 验证盾过期或拦截）。请在浏览器中打开 MissAV 页面通过 Cloudflare 后，导出最新的 Cookie 保存为 cookies_missav.txt 覆盖根目录，并立即提交下载！')
+
     raise RuntimeError(err_text)
 
 def _execute_subtitle_download(manager: Any, task: Task, base_template: str):
@@ -676,7 +723,147 @@ def _execute_thumbnail_download(manager: Any, task: Task, base_template: str):
     task.file_path = chosen
     manager._update_task(task, status='finished', progress=100.0, stage=None)
 
+def _execute_wechat_channels_download(manager: Any, task: Task, base_template: str):
+    import requests
+    import time
+    
+    # 最终输出文件和临时文件路径
+    final_path = os.path.join(manager.download_dir, f"{base_template}.mp4")
+    tmp_path = final_path + ".tmp"
+    
+    task.file_path = final_path
+    manager._update_task(task, status='downloading', stage='downloading', progress=0.0)
+    task.log.append("[channels] 开始流式下载微信视频号视频...")
+    logger.info(f"[CHANNELS] 任务 {task.id}: 开始流式下载 {task.url}")
+    
+    # 获取代理
+    proxy_dict = {}
+    try:
+        import config
+        proxy_url = os.environ.get('LUMINA_PROXY') or os.environ.get('UMD_PROXY') or getattr(config, 'PROXY_URL', '')
+    except ImportError:
+        proxy_url = os.environ.get('LUMINA_PROXY') or os.environ.get('UMD_PROXY', '')
+    if proxy_url:
+        proxy_dict = {
+            "http": proxy_url,
+            "https": proxy_url
+        }
+        task.log.append(f"[proxy] 使用代理: {proxy_url}")
+        
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Referer': 'https://channels.weixin.qq.com/',
+        'Accept': '*/*'
+    }
+    
+    # 禁用 urllib3 SSL 警告
+    try:
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    except Exception:
+        pass
+    
+    try:
+        start_time = time.time()
+        # 流式请求
+        r = requests.get(task.url, headers=headers, proxies=proxy_dict, stream=True, timeout=30, verify=False)
+        r.raise_for_status()
+        
+        total_size = int(r.headers.get('content-length', 0))
+        downloaded_size = 0
+        
+        last_update_time = time.time()
+        last_downloaded_size = 0
+        
+        with open(tmp_path, 'wb') as f:
+            for chunk in r.iter_content(chunk_size=1024 * 64):
+                if task.canceled or task.status == 'canceled':
+                    task.log.append("[channels] 任务被用户取消")
+                    break
+                if chunk:
+                    f.write(chunk)
+                    downloaded_size += len(chunk)
+                    
+                    # 定期更新进度 (例如每 0.5 秒或满 1MB)
+                    now = time.time()
+                    if now - last_update_time > 0.5 or downloaded_size == total_size:
+                        duration = now - last_update_time
+                        bytes_diff = downloaded_size - last_downloaded_size
+                        # 计算速度
+                        speed = bytes_diff / duration if duration > 0 else 0
+                        
+                        if speed > 1024 * 1024:
+                            speed_str = f"{speed / (1024 * 1024):.2f} MB/s"
+                        elif speed > 1024:
+                            speed_str = f"{speed / 1024:.2f} KB/s"
+                        else:
+                            speed_str = f"{speed:.2f} B/s"
+                            
+                        percent = (downloaded_size / total_size * 100.0) if total_size > 0 else 0.0
+                        manager._update_task(task, progress=round(percent, 1), speed=speed_str)
+                        
+                        # 打印日志到终端
+                        logger.info(f"[CHANNELS] 任务 {task.id}: {percent:.1f}% @ {speed_str}")
+                        
+                        last_update_time = now
+                        last_downloaded_size = downloaded_size
+        
+        if task.canceled or task.status == 'canceled':
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+            return
+            
+        task.log.append("[channels] 原始加密视频文件下载完成。")
+        manager._update_task(task, stage='decrypting', progress=99.0)
+        
+        # 提取 decodekey
+        import re
+        decode_key = None
+        # 兼容 decodekey 或 decode_key
+        match = re.search(r'[?&](decode_?key)=([^&]+)', task.url)
+        if match:
+            decode_key = match.group(2)
+            
+        if decode_key:
+            task.log.append(f"[channels] 提取到解密密钥: {decode_key}，正在进行 Isaac64 XOR 头部解密...")
+            logger.info(f"[CHANNELS] 任务 {task.id}: 提取到密钥 {decode_key}，正在进行 Isaac64 XOR 头部解密...")
+            success = decrypt_channel_video(tmp_path, final_path, decode_key)
+            if success:
+                task.log.append("[channels] 解密完成，输出完整无损 MP4 视频！")
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+                manager._update_task(task, status='finished', progress=100.0, stage=None)
+            else:
+                task.log.append("[channels] 解密失败，将原加密视频保存（可能无法播放）。")
+                if os.path.exists(tmp_path):
+                    if os.path.exists(final_path):
+                        os.remove(final_path)
+                    os.rename(tmp_path, final_path)
+                manager._update_task(task, status='error', error_code='DECRYPT_FAILED', error_message='视频号头部解密失败')
+        else:
+            task.log.append("[channels] 警告: 未在 URL 中提取到 decodekey 参数，直接保存为原文件（将无法播放）。")
+            logger.warning(f"[CHANNELS] 任务 {task.id}: 未提取到 decodekey")
+            if os.path.exists(tmp_path):
+                if os.path.exists(final_path):
+                    os.remove(final_path)
+                os.rename(tmp_path, final_path)
+            manager._update_task(task, status='finished', progress=100.0, stage=None)
+            
+    except Exception as e:
+        task.log.append(f"[channels] 下载或解密出错: {str(e)}")
+        logger.error(f"[CHANNELS] 任务 {task.id} 异常: {e}", exc_info=True)
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+        raise e
+
 def _execute_media_download(manager: Any, task: Task, base_template: str):
+    if 'findermp.video.qq.com' in task.url.lower() or 'decodekey=' in task.url.lower() or 'decode_key=' in task.url.lower():
+        _execute_wechat_channels_download(manager, task, base_template)
+        return
+
     selected_cookie_file = _select_cookie_file(task.url, manager.cookies_file)
     effective_url = _normalize_missav_url_by_cookie(task.url, selected_cookie_file)
     q = getattr(task, 'quality', 'auto')
@@ -754,6 +941,9 @@ def _execute_media_download(manager: Any, task: Task, base_template: str):
              '--hls-prefer-native', '--no-continue',  # 禁用续传，避免因过期URL导致403
              '-o', out_path_template]
         a = _with_plugin_dir_args(a)
+        js_args = _get_js_runtime_args()
+        if js_args:
+            a += js_args
 
         try:
             import config

@@ -3,6 +3,7 @@ import sys
 import logging
 import subprocess
 import shutil
+import threading
 try:
     import config
 except ImportError:
@@ -115,25 +116,23 @@ def get_ytdlp_version():
         logger.error(f"获取 yt-dlp 版本失败: {e}")
         return None
 
+_ytdlp_update_lock = threading.Lock()
+
 def check_ytdlp_update():
     """检查 yt-dlp 是否有更新"""
     try:
-        # 获取当前版本
         current_version = get_ytdlp_version()
         if not current_version:
             return {'error': '无法获取当前版本'}
 
-        # 检查最新版本 (使用 --update-to 检查)
         result = subprocess.run([config.YTDLP_PATH, '--update-to', 'stable'], capture_output=True, text=True, encoding='utf-8', errors='ignore', creationflags=CREATE_NO_WINDOW, timeout=30)
 
         if 'yt-dlp is up to date' in result.stdout:
             return {'status': 'up_to_date', 'current_version': current_version}
         elif 'Updated yt-dlp to' in result.stdout:
-            # 已经更新了，获取新版本
             new_version = get_ytdlp_version()
             return {'status': 'updated', 'old_version': current_version, 'new_version': new_version}
         else:
-            # 需要更新但未自动更新
             return {'status': 'update_available', 'current_version': current_version}
 
     except Exception as e:
@@ -141,26 +140,40 @@ def check_ytdlp_update():
         return {'error': str(e)}
 
 def update_ytdlp():
-    """强制更新 yt-dlp 到最新稳定版"""
+    """强制更新 yt-dlp 到最新稳定版 (带防并发锁与活跃任务冲突检测)"""
+    if not _ytdlp_update_lock.acquire(blocking=False):
+        return {'success': False, 'message': '当前已有更新进程在运行中，请勿重复操作'}
     try:
+        # 检测是否有活跃的下载任务
+        try:
+            from ..tasks.manager import get_task_manager
+            tm = get_task_manager()
+            if tm and getattr(tm, 'procs', None) and len(tm.procs) > 0:
+                return {'success': False, 'message': '当前有正在进行的下载任务，请在任务完成后再更新内核'}
+        except Exception:
+            pass
+
         logger.info("开始更新 yt-dlp...")
-        result = subprocess.run([config.YTDLP_PATH, '--update-to', 'stable'], capture_output=True, text=True, encoding='utf-8', errors='ignore', creationflags=CREATE_NO_WINDOW, timeout=60)
+        result = subprocess.run([config.YTDLP_PATH, '--update-to', 'stable'], capture_output=True, text=True, encoding='utf-8', errors='ignore', creationflags=CREATE_NO_WINDOW, timeout=90)
 
         if result.returncode == 0:
             if 'Updated yt-dlp to' in result.stdout:
                 new_version = get_ytdlp_version()
                 logger.info(f"yt-dlp 更新成功，新版本: {new_version}")
-                return {'success': True, 'message': '更新成功', 'new_version': new_version}
+                return {'success': True, 'message': f'更新成功，当前版本: {new_version}', 'new_version': new_version}
             elif 'yt-dlp is up to date' in result.stdout:
                 current_version = get_ytdlp_version()
-                return {'success': True, 'message': '已是最新版本', 'current_version': current_version}
+                return {'success': True, 'message': f'当前已是最新版本 ({current_version})', 'current_version': current_version}
             else:
-                return {'success': False, 'message': '更新过程无明确结果'}
+                new_version = get_ytdlp_version()
+                return {'success': True, 'message': f'更新完成，当前版本: {new_version}', 'new_version': new_version}
         else:
-            error_msg = result.stderr or result.stdout
+            error_msg = (result.stderr or result.stdout or '未知错误').strip()
             logger.error(f"yt-dlp 更新失败: {error_msg}")
             return {'success': False, 'message': f'更新失败: {error_msg}'}
 
     except Exception as e:
         logger.error(f"yt-dlp 更新异常: {e}")
         return {'success': False, 'message': f'更新异常: {str(e)}'}
+    finally:
+        _ytdlp_update_lock.release()

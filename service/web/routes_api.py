@@ -97,6 +97,10 @@ def cleanup_tasks():
     count = tm.cleanup_finished_tasks()
     return jsonify({'message': f'Cleaned up {count} tasks'})
 
+def _is_wechat_channels(url: str) -> bool:
+    lower_url = (url or '').lower()
+    return 'findermp.video.qq.com' in lower_url or 'decodekey=' in lower_url or 'decode_key=' in lower_url
+
 @api_bp.route('/info', methods=['POST'])
 def api_info():
     """获取视频详细信息 (用于前端解析格式)"""
@@ -108,6 +112,32 @@ def api_info():
     url = data.get('url')
     if not url or not validate_url(url):
         return jsonify({'error': 'Invalid URL'}), 400
+
+    if _is_wechat_channels(url):
+        info = {
+            'title': '微信视频号加密视频 (WeChat Channel Video)',
+            'extractor': 'wechat_channels',
+            'extractor_key': 'WechatChannels',
+            'webpage_url': url,
+            'formats': [
+                {
+                    'format_id': 'best',
+                    'height': 1080,
+                    'ext': 'mp4',
+                    'vcodec': 'h264',
+                    'acodec': 'aac',
+                }
+            ],
+            'quality_pairs': {
+                '1080': {
+                    'video': 'best',
+                    'audio': 'best'
+                }
+            },
+            'max_height': 1080
+        }
+        return jsonify(info)
+
 
     # 1. 优先从 LRU 缓存获取已探测的视频信息
     cached_info = info_lru_cache.get(url)
@@ -365,3 +395,22 @@ def reveal_file():
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)})
     return jsonify({'success': False, 'error': 'file not found'})
+
+@api_bp.route('/ytdlp/version', methods=['GET'])
+def api_ytdlp_version():
+    """获取当前 yt-dlp 内核版本"""
+    from service.utils.dependencies import get_ytdlp_version
+    ver = get_ytdlp_version()
+    return jsonify({
+        'version': ver,
+        'success': bool(ver)
+    })
+
+@api_bp.route('/ytdlp/update', methods=['POST'])
+def api_ytdlp_update():
+    """触发 yt-dlp 内核更新到最新稳定版"""
+    from service.utils.dependencies import update_ytdlp
+    result = update_ytdlp()
+    status_code = 200 if result.get('success') else 400
+    return jsonify(result), status_code
+

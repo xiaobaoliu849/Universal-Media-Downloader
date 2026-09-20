@@ -246,17 +246,25 @@ def build_app(extra_debug=False):
                     print(f"[资源校验][WARN] 源目录缺失: {src} (未补拷贝)")
         for src, rel in required_files:
             target = dist_root / rel
-            if not target.exists():
-                if Path(src).exists():
+            src_path = Path(src)
+            if src_path.exists():
+                should_copy = not target.exists()
+                if not should_copy:
                     try:
-                        print(f"[资源校验] 缺失文件 {rel} -> 正在补拷贝...")
+                        if src_path.stat().st_mtime > target.stat().st_mtime or src_path.stat().st_size != target.stat().st_size:
+                            should_copy = True
+                    except Exception:
+                        pass
+                if should_copy:
+                    try:
+                        print(f"[资源校验] 同步最新文件 {rel} -> 正在复制...")
                         from shutil import copy2
                         copy2(src, target)
                         fixed_any = True
                     except Exception as fe:
                         print(f"[资源校验][ERROR] 复制 {src} 失败: {fe}")
-                else:
-                    print(f"[资源校验][WARN] 源文件缺失: {src} (未补拷贝)")
+            else:
+                print(f"[资源校验][WARN] 源文件缺失: {src} (未补拷贝)")
         if fixed_any:
             # 再次确认关键模板文件存在
             probe_tpl = dist_root / 'templates' / 'index.html'

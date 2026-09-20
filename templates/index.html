@@ -20,7 +20,13 @@
                 <div class="title-block">
                     <h1>Universal Media Downloader</h1>
                 </div>
-                <button id="themeToggleBtn" class="theme-toggle-btn" aria-label="切换主题">🌙</button>
+                <div class="header-actions" style="display: flex; align-items: center; gap: 10px; margin-left: auto;">
+                    <div id="ytdlpBadge" class="ytdlp-badge" style="font-size: 12px; color: var(--text-secondary, #64748b); display: flex; align-items: center; gap: 6px;">
+                        <span id="ytdlpVerText">内核加载中...</span>
+                        <button id="ytdlpUpdateBtn" class="clear-btn" style="padding: 3px 8px; font-size: 11px; cursor: pointer; border-radius: 6px;" title="更新 yt-dlp 核心引擎到最新版">🔄 升级内核</button>
+                    </div>
+                    <button id="themeToggleBtn" class="theme-toggle-btn" aria-label="切换主题">🌙</button>
+                </div>
             </div>
         </div>
 

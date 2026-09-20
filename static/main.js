@@ -19,8 +19,59 @@ let lastFetchedUrl = '';     // 记录上次请求的URL
         }
     }
 
+    async function loadYtdlpVersion() {
+        const verText = document.getElementById('ytdlpVerText');
+        if (!verText) return;
+        try {
+            const resp = await fetch('/api/ytdlp/version');
+            const data = await resp.json();
+            if (data.version) {
+                verText.textContent = `yt-dlp: ${data.version}`;
+            } else {
+                verText.textContent = 'yt-dlp: 未知版本';
+            }
+        } catch (e) {
+            verText.textContent = 'yt-dlp';
+        }
+    }
+
+    async function handleYtdlpUpdate() {
+        const updateBtn = document.getElementById('ytdlpUpdateBtn');
+        const verText = document.getElementById('ytdlpVerText');
+        if (!updateBtn || updateBtn.disabled) return;
+        updateBtn.disabled = true;
+        const oldText = updateBtn.textContent;
+        updateBtn.textContent = '⏳ 更新中...';
+        window.showToast('正在检查并更新 yt-dlp 内核，请稍候...', 'info');
+
+        try {
+            const resp = await fetch('/api/ytdlp/update', { method: 'POST' });
+            const data = await resp.json();
+            if (resp.ok && data.success) {
+                window.showToast(data.message || 'yt-dlp 内核更新成功！', 'success');
+                if (data.new_version && verText) {
+                    verText.textContent = `yt-dlp: ${data.new_version}`;
+                } else {
+                    loadYtdlpVersion();
+                }
+            } else {
+                window.showToast(data.message || '更新失败', 'error');
+            }
+        } catch (e) {
+            window.showToast('更新请求异常: ' + e.message, 'error');
+        } finally {
+            updateBtn.disabled = false;
+            updateBtn.textContent = oldText;
+        }
+    }
+
     document.addEventListener('DOMContentLoaded', () => {
         updateThemeBtn(savedTheme);
+        loadYtdlpVersion();
+        const updateBtn = document.getElementById('ytdlpUpdateBtn');
+        if (updateBtn) {
+            updateBtn.addEventListener('click', handleYtdlpUpdate);
+        }
         const btn = document.getElementById('themeToggleBtn');
         if (btn) {
             btn.addEventListener('click', () => {
