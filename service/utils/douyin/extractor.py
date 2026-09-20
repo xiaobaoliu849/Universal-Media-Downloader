@@ -66,21 +66,46 @@ def extract_aweme_id(url: str) -> Optional[str]:
 
 def get_douyin_cookies(cookie_file: Optional[str]) -> Dict[str, str]:
     cookies: Dict[str, str] = {}
-    if not cookie_file or not os.path.exists(cookie_file):
-        return cookies
+    candidate_files: list[str] = []
+    if cookie_file and os.path.exists(cookie_file):
+        candidate_files.append(cookie_file)
 
+    # 自动搜索常见目录（exe 目录、当前工作目录、项目目录等），确保用户将 cookies.txt 放入任一位置均可被识别
+    search_dirs = [os.getcwd()]
     try:
-        with open(cookie_file, "r", encoding="utf-8", errors="ignore") as f:
-            for line in f:
-                if not line or line.startswith("#"):
-                    continue
-                parts = line.strip().split("\t")
-                if len(parts) >= 7:
-                    domain = parts[0].lower()
-                    if "douyin.com" in domain:
-                        cookies[parts[5]] = parts[6]
-    except Exception as e:
-        logger.warning(f"[DOUYIN] 读取 cookies 失败: {e}")
+        if sys.argv and sys.argv[0]:
+            search_dirs.append(os.path.dirname(os.path.abspath(sys.argv[0])))
+        if getattr(sys, 'frozen', False):
+            search_dirs.append(os.path.dirname(os.path.abspath(sys.executable)))
+        from pathlib import Path
+        search_dirs.append(str(Path(__file__).resolve().parents[3]))
+    except Exception:
+        pass
+
+    for sd in search_dirs:
+        if not sd or not os.path.exists(sd):
+            continue
+        for name in ('cookies_douyin.txt', 'cookies-douyin.txt', 'douyin.cookies.txt', 'cookies.txt'):
+            p = os.path.join(sd, name)
+            if p not in candidate_files and os.path.exists(p):
+                candidate_files.append(p)
+
+    for cfile in candidate_files:
+        try:
+            with open(cfile, "r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    if not line or line.startswith("#"):
+                        continue
+                    parts = line.strip().split("\t")
+                    if len(parts) >= 7:
+                        domain = parts[0].lower()
+                        if "douyin.com" in domain:
+                            cookies[parts[5]] = parts[6]
+            if cookies:
+                logger.info(f"[DOUYIN] 成功从 {cfile} 加载了 {len(cookies)} 个抖音 Cookies")
+                break
+        except Exception as e:
+            logger.warning(f"[DOUYIN] 读取 cookies 失败: {e}")
 
     return cookies
 
@@ -199,7 +224,9 @@ def parse_douyin_info(url: str, cookie_file: Optional[str] = None) -> Dict[str, 
 
     detail = fetch_douyin_detail(aweme_id, cookie_file)
 
-    title = (detail.get("desc") or "").strip()
+    raw_title = detail.get("desc") or ""
+    title = re.sub(r'[\r\n\t\x00-\x1f\x7f-\x9f]+', ' ', raw_title).strip()
+    title = re.sub(r'\s+', ' ', title)
     if not title:
         title = f"抖音作品_{aweme_id}"
 

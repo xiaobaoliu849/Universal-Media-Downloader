@@ -73,7 +73,9 @@ def main():
     files_to_copy = {
         "分发指南.md": "使用说明.md",
         "README.md": "README.md",
-        "donate_qr.png": "打赏二维码.png"
+        "donate_qr.png": "打赏二维码.png",
+        "cookies.example.txt": "cookies.example.txt",
+        "manual_cookies_guide.txt": "manual_cookies_guide.txt",
     }
     for src, dest in files_to_copy.items():
         src_path = project_root / src

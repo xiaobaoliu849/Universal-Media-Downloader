@@ -180,38 +180,59 @@ def _cookiefile_domains(cookie_file: str) -> list[str]:
 
 def _site_cookie_candidates(url: str, cookie_file: str) -> list[str]:
     candidates: list[str] = []
-    base_dir = os.path.dirname(cookie_file) if cookie_file else ''
-    if cookie_file and not base_dir:
-        base_dir = '.'
-    if _is_missav_url(url) and base_dir:
-        for name in ('cookies_missav.txt', 'cookies-missav.txt', 'missav.cookies.txt'):
-            path = os.path.join(base_dir, name)
-            if path not in candidates:
-                candidates.append(path)
-        try:
-            for name in os.listdir(base_dir):
-                lower = name.lower()
-                if 'missav' in lower and 'cookie' in lower and lower.endswith('.txt'):
-                    path = os.path.join(base_dir, name)
-                    if path not in candidates:
-                        candidates.append(path)
-        except Exception:
-            pass
-    if is_douyin_url(url) and base_dir:
-        for name in ('cookies_douyin.txt', 'cookies-douyin.txt', 'douyin.cookies.txt', 'cookies.txt'):
-            path = os.path.join(base_dir, name)
-            if path not in candidates and os.path.exists(path):
-                candidates.append(path)
-        try:
-            for name in os.listdir(base_dir):
-                lower = name.lower()
-                if 'douyin' in lower and 'cookie' in lower and lower.endswith('.txt'):
-                    path = os.path.join(base_dir, name)
-                    if path not in candidates:
-                        candidates.append(path)
-        except Exception:
-            pass
-    if cookie_file and cookie_file not in candidates:
+    base_dirs: list[str] = []
+    if cookie_file:
+        base_dirs.append(os.path.dirname(os.path.abspath(cookie_file)))
+    try:
+        base_dirs.append(os.getcwd())
+        if sys.argv and sys.argv[0]:
+            base_dirs.append(os.path.dirname(os.path.abspath(sys.argv[0])))
+        if getattr(sys, 'frozen', False):
+            base_dirs.append(os.path.dirname(os.path.abspath(sys.executable)))
+        from pathlib import Path
+        here = Path(__file__).resolve().parents[2]
+        base_dirs.append(str(here))
+    except Exception:
+        pass
+
+    clean_dirs = []
+    seen = set()
+    for bd in base_dirs:
+        if bd and bd not in seen and os.path.exists(bd):
+            seen.add(bd)
+            clean_dirs.append(bd)
+
+    for bd in clean_dirs:
+        if _is_missav_url(url):
+            for name in ('cookies_missav.txt', 'cookies-missav.txt', 'missav.cookies.txt'):
+                path = os.path.join(bd, name)
+                if path not in candidates and os.path.exists(path):
+                    candidates.append(path)
+            try:
+                for name in os.listdir(bd):
+                    lower = name.lower()
+                    if 'missav' in lower and 'cookie' in lower and lower.endswith('.txt'):
+                        path = os.path.join(bd, name)
+                        if path not in candidates and os.path.exists(path):
+                            candidates.append(path)
+            except Exception:
+                pass
+        if is_douyin_url(url):
+            for name in ('cookies_douyin.txt', 'cookies-douyin.txt', 'douyin.cookies.txt', 'cookies.txt'):
+                path = os.path.join(bd, name)
+                if path not in candidates and os.path.exists(path):
+                    candidates.append(path)
+            try:
+                for name in os.listdir(bd):
+                    lower = name.lower()
+                    if 'douyin' in lower and 'cookie' in lower and lower.endswith('.txt'):
+                        path = os.path.join(bd, name)
+                        if path not in candidates and os.path.exists(path):
+                            candidates.append(path)
+            except Exception:
+                pass
+
+    if cookie_file and cookie_file not in candidates and os.path.exists(cookie_file):
         candidates.append(cookie_file)
     return candidates
 
@@ -883,16 +904,33 @@ def _execute_douyin_download(manager: Any, task: Task, base_template: str):
     import requests
     import time
 
-    selected_cookie_file = _select_cookie_file(task.url, manager.cookies_file) or manager.cookies_file
-    task.log.append("[douyin] 正在解析抖音作品信息...")
-    manager._update_task(task, status='downloading', stage='probing', progress=0.0)
+    safe_base = _safe_filename(base_template)
 
-    try:
-        info = parse_douyin_info(task.url, selected_cookie_file)
-    except Exception as e:
-        task.log.append(f"[douyin] 解析失败: {e}")
-        logger.error(f"[DOUYIN] 任务 {task.id} 抖音解析失败: {e}", exc_info=True)
-        raise e
+    info = None
+    if task.info_cache and isinstance(task.info_cache, dict) and task.info_cache.get('formats'):
+        info = task.info_cache
+        task.log.append("[douyin] 复用已探测作品信息（跳过二次网络请求）")
+    elif 'service.web.routes_api' in sys.modules:
+        try:
+            from ..web.routes_api import info_lru_cache
+            cached = info_lru_cache.get(task.url)
+            if cached and cached.get('formats'):
+                info = cached
+                task.log.append("[douyin] 复用内存缓存的作品信息（跳过二次网络请求）")
+        except Exception:
+            pass
+
+    if not info:
+        selected_cookie_file = _select_cookie_file(task.url, manager.cookies_file) or manager.cookies_file
+        task.log.append("[douyin] 正在解析抖音作品信息...")
+        manager._update_task(task, status='downloading', stage='probing', progress=0.0)
+
+        try:
+            info = parse_douyin_info(task.url, selected_cookie_file)
+        except Exception as e:
+            task.log.append(f"[douyin] 解析失败: {e}")
+            logger.error(f"[DOUYIN] 任务 {task.id} 抖音解析失败: {e}", exc_info=True)
+            raise e
 
     task.title = info.get('title') or task.title
     task.duration = info.get('duration') or task.duration
@@ -923,7 +961,7 @@ def _execute_douyin_download(manager: Any, task: Task, base_template: str):
     if images and not detail.get('video', {}).get('play_addr'):
         # Image album download
         task.log.append(f"[douyin] 检测到图集作品，包含 {len(images)} 张图片")
-        gallery_dir = os.path.join(manager.download_dir, base_template)
+        gallery_dir = os.path.join(manager.download_dir, safe_base)
         os.makedirs(gallery_dir, exist_ok=True)
         task.file_path = gallery_dir
 
@@ -935,7 +973,7 @@ def _execute_douyin_download(manager: Any, task: Task, base_template: str):
             if not img_urls:
                 continue
             img_url = img_urls[0]
-            img_path = os.path.join(gallery_dir, f"{base_template}_{idx + 1:02d}.jpeg")
+            img_path = os.path.join(gallery_dir, f"{safe_base}_{idx + 1:02d}.jpeg")
             try:
                 r = requests.get(img_url, headers=headers, proxies=proxy_dict, timeout=20)
                 if r.status_code == 200:
@@ -951,7 +989,7 @@ def _execute_douyin_download(manager: Any, task: Task, base_template: str):
         music = detail.get('music', {})
         music_urls = music.get('play_url', {}).get('url_list', [])
         if music_urls:
-            music_path = os.path.join(gallery_dir, f"{base_template}_audio.mp3")
+            music_path = os.path.join(gallery_dir, f"{safe_base}_audio.mp3")
             try:
                 mr = requests.get(music_urls[0], headers=headers, proxies=proxy_dict, timeout=20)
                 if mr.status_code == 200:
@@ -982,7 +1020,7 @@ def _execute_douyin_download(manager: Any, task: Task, base_template: str):
         download_url = formats[0]['url']
         ext = 'mp4'
 
-    final_path = os.path.join(manager.download_dir, f"{base_template}.{ext}")
+    final_path = os.path.join(manager.download_dir, f"{safe_base}.{ext}")
     tmp_path = final_path + ".tmp"
     task.file_path = final_path
     manager._update_task(task, status='downloading', stage='downloading', progress=0.0)
@@ -1052,7 +1090,7 @@ def _execute_douyin_download(manager: Any, task: Task, base_template: str):
 
         # If audio_only requested but ext was mp4, extract audio with ffmpeg
         if mode == 'audio_only' and ext == 'mp4':
-            m4a_path = os.path.join(manager.download_dir, f"{base_template}.m4a")
+            m4a_path = os.path.join(manager.download_dir, f"{safe_base}.m4a")
             ffmpeg_bin = manager.ffmpeg_locator() if callable(manager.ffmpeg_locator) else 'ffmpeg'
             import subprocess
             cmd = [str(ffmpeg_bin), '-y', '-i', final_path, '-vn', '-c:a', 'copy', m4a_path]
@@ -1780,7 +1818,10 @@ def _fill_media_metadata(manager: Any, task: Task):
     if fields: manager._update_task(task, **fields)
 
 def _safe_filename(name: str) -> str:
+    # 彻底去除换行符、回车符、制表符及所有 ASCII 控制字符，避免 Windows 下触发 [Errno 22] Invalid argument
+    name = re.sub(r'[\r\n\t\x00-\x1f\x7f-\x9f]+', ' ', name)
     name = re.sub(r'[\\/:*?"<>|]', '_', name)
+    name = re.sub(r'\s+', ' ', name)
     name = name.strip().strip('.')
     if len(name) > 150:
         name = name[:150]

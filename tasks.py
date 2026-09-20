@@ -1182,7 +1182,10 @@ class TaskManager:
             raise e
 
     def _safe_filename(self, name: str) -> str:
+        # 彻底去除换行符、回车符、制表符及所有 ASCII 控制字符，避免 Windows 下触发 [Errno 22] Invalid argument
+        name = re.sub(r'[\r\n\t\x00-\x1f\x7f-\x9f]+', ' ', name)
         name = re.sub(r'[\\/:*?"<>|]', '_', name)
+        name = re.sub(r'\s+', ' ', name)
         name = name.strip().strip('.')
         if len(name) > 150:
             name = name[:150]

@@ -308,7 +308,16 @@ def stream_task():
         task_kwargs['video_format'] = video_format
     if audio_format:
         task_kwargs['audio_format'] = audio_format
-    if info_cache:
+    # 丰富 info_cache：若内存 LRU 缓存中有完整探测结果（如 formats / 抖音 play_addr），带上供 downloader 直接复用
+    cached = info_lru_cache.get(url)
+    if cached and isinstance(cached, dict):
+        if not info_cache:
+            task_kwargs['info_cache'] = cached
+        elif isinstance(info_cache, dict):
+            merged_cache = dict(cached)
+            merged_cache.update(info_cache)
+            task_kwargs['info_cache'] = merged_cache
+    elif info_cache:
         task_kwargs['info_cache'] = info_cache
     if meta_mode is not None:
         task_kwargs['meta_mode'] = 'off' if meta_mode == '0' else meta_mode

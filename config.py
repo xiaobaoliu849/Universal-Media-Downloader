@@ -207,8 +207,25 @@ def resource_path(relative_path: str) -> str:
 # --- 核心依赖路径 ---
 # 注意：这些路径都基于 resource_path，以确保在打包后也能正确定位文件。
 
-# Cookies 文件
-COOKIES_FILE = resource_path("cookies.txt")
+# Cookies 文件 (优先检查与 exe 同级的程序根目录，其次 cwd，再次 _internal)
+def _get_effective_cookies_file() -> str:
+    candidates = []
+    if getattr(sys, 'frozen', False):
+        exe_dir = os.path.dirname(sys.executable)
+        candidates.append(os.path.join(exe_dir, "cookies.txt"))
+    candidates.append(os.path.join(os.getcwd(), "cookies.txt"))
+    candidates.append(resource_path("cookies.txt"))
+    try:
+        candidates.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "cookies.txt"))
+    except Exception:
+        pass
+
+    for c in candidates:
+        if c and os.path.exists(c):
+            return c
+    return candidates[0] if candidates else resource_path("cookies.txt")
+
+COOKIES_FILE = _get_effective_cookies_file()
 
 # yt-dlp 可执行文件
 YTDLP_PATH = resource_path("yt-dlp.exe")

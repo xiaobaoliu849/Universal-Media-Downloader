@@ -226,6 +226,8 @@ def build_app(extra_debug=False):
         ]
         required_files = [
             ('yt-dlp.exe', 'yt-dlp.exe'),
+            ('cookies.example.txt', 'cookies.example.txt'),
+            ('manual_cookies_guide.txt', 'manual_cookies_guide.txt'),
         ]
         fixed_any = False
         for src, rel in required_dirs:
