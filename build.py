@@ -367,23 +367,28 @@ def main():
     if build_app(extra_debug=extra_debug):
         print("\n+ 构建完成！")
         
-        # 询问是否打开文件夹
-        try:
-            choice = input("\n是否打开输出文件夹? (y/n): ").lower()
-            if choice == 'y':
-                if sys.platform == "win32":
-                    os.startfile("dist\\Universal Media Downloader")
-                elif sys.platform == "darwin":
-                    subprocess.run(["open", "dist/Universal Media Downloader"])
-                else:
-                    subprocess.run(["xdg-open", "dist/Universal Media Downloader"])
-        except KeyboardInterrupt:
-            pass
+        # 询问是否打开文件夹 (仅在交互终端下询问)
+        if sys.stdin and sys.stdin.isatty():
+            try:
+                choice = input("\n是否打开输出文件夹? (y/n): ").lower()
+                if choice == 'y':
+                    if sys.platform == "win32":
+                        os.startfile("dist\\Universal Media Downloader")
+                    elif sys.platform == "darwin":
+                        subprocess.run(["open", "dist/Universal Media Downloader"])
+                    else:
+                        subprocess.run(["xdg-open", "dist/Universal Media Downloader"])
+            except Exception:
+                pass
         
         return 0
     else:
         print("\n- 构建失败！")
-        input("按回车键退出...")
+        if sys.stdin and sys.stdin.isatty():
+            try:
+                input("按回车键退出...")
+            except Exception:
+                pass
         return 1
 
 if __name__ == "__main__":
