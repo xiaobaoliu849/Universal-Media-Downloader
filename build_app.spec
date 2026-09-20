@@ -123,6 +123,11 @@ _hidden = [
     'tasks',
     'errors',
     'flask_cors',  # 有时被遗漏
+    'service.utils.douyin',
+    'service.utils.douyin.sm3',
+    'service.utils.douyin.abogus',
+    'service.utils.douyin.websign',
+    'service.utils.douyin.extractor',
 ]
 
 # runtime_fix_path.py 可选：若不存在则移除

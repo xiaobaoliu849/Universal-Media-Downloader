@@ -15,6 +15,7 @@ from ..utils.errors import classify_error
 from ..utils.subtitles import normalize_srt_inplace
 from ..utils.dependencies import CREATE_NO_WINDOW
 from ..utils.isaac64 import decrypt_channel_video
+from ..utils.douyin import is_douyin_url, parse_douyin_info, USER_AGENT
 import site_configs
 
 logger = logging.getLogger(__name__)
@@ -191,6 +192,20 @@ def _site_cookie_candidates(url: str, cookie_file: str) -> list[str]:
             for name in os.listdir(base_dir):
                 lower = name.lower()
                 if 'missav' in lower and 'cookie' in lower and lower.endswith('.txt'):
+                    path = os.path.join(base_dir, name)
+                    if path not in candidates:
+                        candidates.append(path)
+        except Exception:
+            pass
+    if is_douyin_url(url) and base_dir:
+        for name in ('cookies_douyin.txt', 'cookies-douyin.txt', 'douyin.cookies.txt', 'cookies.txt'):
+            path = os.path.join(base_dir, name)
+            if path not in candidates and os.path.exists(path):
+                candidates.append(path)
+        try:
+            for name in os.listdir(base_dir):
+                lower = name.lower()
+                if 'douyin' in lower and 'cookie' in lower and lower.endswith('.txt'):
                     path = os.path.join(base_dir, name)
                     if path not in candidates:
                         candidates.append(path)
@@ -393,6 +408,11 @@ def _probe_info(manager: Any, task: Task) -> Dict[str, Any]:
             ],
             'max_height': 1080
         }
+
+    if is_douyin_url(task.url):
+        logger.info(f"[PROBE] 拦截到抖音 URL: {task.url}，使用原生解析器")
+        cand_cookie = _select_cookie_file(task.url, manager.cookies_file) or manager.cookies_file
+        return parse_douyin_info(task.url, cand_cookie)
 
     resolved_url = _normalize_missav_url_by_cookie(task.url, _select_cookie_file(task.url, manager.cookies_file))
     if resolved_url != task.url:
@@ -859,9 +879,213 @@ def _execute_wechat_channels_download(manager: Any, task: Task, base_template: s
                 pass
         raise e
 
+def _execute_douyin_download(manager: Any, task: Task, base_template: str):
+    import requests
+    import time
+
+    selected_cookie_file = _select_cookie_file(task.url, manager.cookies_file) or manager.cookies_file
+    task.log.append("[douyin] 正在解析抖音作品信息...")
+    manager._update_task(task, status='downloading', stage='probing', progress=0.0)
+
+    try:
+        info = parse_douyin_info(task.url, selected_cookie_file)
+    except Exception as e:
+        task.log.append(f"[douyin] 解析失败: {e}")
+        logger.error(f"[DOUYIN] 任务 {task.id} 抖音解析失败: {e}", exc_info=True)
+        raise e
+
+    task.title = info.get('title') or task.title
+    task.duration = info.get('duration') or task.duration
+    task.uploader = info.get('uploader') or task.uploader
+    task.thumbnail = info.get('thumbnail') or task.thumbnail
+
+    detail = info.get('_douyin_detail', {})
+    images = detail.get('images', [])
+    mode = getattr(task, 'mode', 'merged')
+
+    # Proxy logic
+    proxy_dict = {}
+    try:
+        import config
+        proxy_url = os.environ.get('LUMINA_PROXY') or os.environ.get('UMD_PROXY') or getattr(config, 'PROXY_URL', '')
+    except ImportError:
+        proxy_url = os.environ.get('LUMINA_PROXY') or os.environ.get('UMD_PROXY', '')
+    if proxy_url:
+        proxy_dict = {"http": proxy_url, "https": proxy_url}
+        task.log.append(f"[proxy] 使用代理: {proxy_url}")
+
+    headers = {
+        'User-Agent': USER_AGENT,
+        'Referer': 'https://www.douyin.com/',
+        'Accept': '*/*'
+    }
+
+    if images and not detail.get('video', {}).get('play_addr'):
+        # Image album download
+        task.log.append(f"[douyin] 检测到图集作品，包含 {len(images)} 张图片")
+        gallery_dir = os.path.join(manager.download_dir, base_template)
+        os.makedirs(gallery_dir, exist_ok=True)
+        task.file_path = gallery_dir
+
+        for idx, img in enumerate(images):
+            if task.canceled or task.status == 'canceled':
+                task.log.append("[douyin] 任务被用户取消")
+                return
+            img_urls = img.get('url_list', [])
+            if not img_urls:
+                continue
+            img_url = img_urls[0]
+            img_path = os.path.join(gallery_dir, f"{base_template}_{idx + 1:02d}.jpeg")
+            try:
+                r = requests.get(img_url, headers=headers, proxies=proxy_dict, timeout=20)
+                if r.status_code == 200:
+                    with open(img_path, 'wb') as f:
+                        f.write(r.content)
+            except Exception as e:
+                task.log.append(f"[douyin] 下载图片 {idx + 1} 出错: {e}")
+
+            pct = round((idx + 1) / len(images) * 90.0, 1)
+            manager._update_task(task, progress=pct)
+
+        # Check background music
+        music = detail.get('music', {})
+        music_urls = music.get('play_url', {}).get('url_list', [])
+        if music_urls:
+            music_path = os.path.join(gallery_dir, f"{base_template}_audio.mp3")
+            try:
+                mr = requests.get(music_urls[0], headers=headers, proxies=proxy_dict, timeout=20)
+                if mr.status_code == 200:
+                    with open(music_path, 'wb') as f:
+                        f.write(mr.content)
+            except Exception:
+                pass
+
+        manager._update_task(task, status='finished', stage=None, progress=100.0)
+        task.log.append(f"[douyin] 图集下载完成，已保存至文件夹: {gallery_dir}")
+        return
+
+    # Video download
+    formats = info.get('formats', [])
+    if not formats or not formats[0].get('url'):
+        raise ValueError("未在抖音详情中获取到有效视频下载地址")
+
+    if mode == 'audio_only':
+        music = detail.get('music', {})
+        music_urls = music.get('play_url', {}).get('url_list', [])
+        if music_urls:
+            download_url = music_urls[0]
+            ext = 'mp3'
+        else:
+            download_url = formats[0]['url']
+            ext = 'mp4'
+    else:
+        download_url = formats[0]['url']
+        ext = 'mp4'
+
+    final_path = os.path.join(manager.download_dir, f"{base_template}.{ext}")
+    tmp_path = final_path + ".tmp"
+    task.file_path = final_path
+    manager._update_task(task, status='downloading', stage='downloading', progress=0.0)
+    task.log.append(f"[douyin] 开始流式下载无水印视频: {task.title}")
+    logger.info(f"[DOUYIN] 任务 {task.id}: 开始流式下载 {download_url}")
+
+    try:
+        try:
+            r = requests.get(download_url, headers=headers, proxies=proxy_dict, stream=True, timeout=30)
+            r.raise_for_status()
+        except (requests.exceptions.ProxyError, requests.exceptions.SSLError, requests.exceptions.ConnectionError) as pe:
+            if proxy_dict:
+                task.log.append("[proxy] 代理连接失败，自动切换为直连下载...")
+                r = requests.get(download_url, headers=headers, stream=True, timeout=30)
+                r.raise_for_status()
+            else:
+                raise pe
+
+        total_size = int(r.headers.get('content-length', 0))
+        task.file_size = total_size
+        downloaded_size = 0
+        last_update_time = time.time()
+        last_downloaded_size = 0
+
+        with open(tmp_path, 'wb') as f:
+            for chunk in r.iter_content(chunk_size=1024 * 64):
+                if task.canceled or task.status == 'canceled':
+                    task.log.append("[douyin] 任务被用户取消")
+                    break
+                if chunk:
+                    f.write(chunk)
+                    downloaded_size += len(chunk)
+
+                    now = time.time()
+                    if now - last_update_time > 0.5 or downloaded_size == total_size:
+                        duration = now - last_update_time
+                        bytes_diff = downloaded_size - last_downloaded_size
+                        speed = bytes_diff / duration if duration > 0 else 0
+
+                        if speed > 1024 * 1024:
+                            speed_str = f"{speed / (1024 * 1024):.2f} MB/s"
+                        elif speed > 1024:
+                            speed_str = f"{speed / 1024:.2f} KB/s"
+                        else:
+                            speed_str = f"{speed:.2f} B/s"
+
+                        percent = (downloaded_size / total_size * 100.0) if total_size > 0 else 0.0
+                        manager._update_task(task, progress=round(percent, 1), speed=speed_str)
+                        last_update_time = now
+                        last_downloaded_size = downloaded_size
+
+        if task.canceled or task.status == 'canceled':
+            if os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except Exception:
+                    pass
+            return
+
+        if os.path.exists(final_path):
+            try:
+                os.remove(final_path)
+            except Exception:
+                pass
+        os.rename(tmp_path, final_path)
+        task.file_size = os.path.getsize(final_path)
+
+        # If audio_only requested but ext was mp4, extract audio with ffmpeg
+        if mode == 'audio_only' and ext == 'mp4':
+            m4a_path = os.path.join(manager.download_dir, f"{base_template}.m4a")
+            ffmpeg_bin = manager.ffmpeg_locator() if callable(manager.ffmpeg_locator) else 'ffmpeg'
+            import subprocess
+            cmd = [str(ffmpeg_bin), '-y', '-i', final_path, '-vn', '-c:a', 'copy', m4a_path]
+            task.log.append("[douyin] 正在提取音频轨 (m4a)...")
+            res = subprocess.run(cmd, capture_output=True)
+            if res.returncode == 0 and os.path.exists(m4a_path):
+                try:
+                    os.remove(final_path)
+                except Exception:
+                    pass
+                final_path = m4a_path
+                task.file_path = final_path
+                task.file_size = os.path.getsize(final_path)
+
+        task.log.append(f"[douyin] 下载完成: {os.path.basename(final_path)} ({task.file_size / (1024*1024):.1f} MB)")
+        manager._update_task(task, status='finished', stage=None, progress=100.0)
+    except Exception as e:
+        task.log.append(f"[douyin] 下载出错: {str(e)}")
+        logger.error(f"[DOUYIN] 任务 {task.id} 异常: {e}", exc_info=True)
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+        raise e
+
 def _execute_media_download(manager: Any, task: Task, base_template: str):
     if 'findermp.video.qq.com' in task.url.lower() or 'decodekey=' in task.url.lower() or 'decode_key=' in task.url.lower():
         _execute_wechat_channels_download(manager, task, base_template)
+        return
+
+    if is_douyin_url(task.url) or getattr(task, 'extractor', '') == 'douyin':
+        _execute_douyin_download(manager, task, base_template)
         return
 
     selected_cookie_file = _select_cookie_file(task.url, manager.cookies_file)

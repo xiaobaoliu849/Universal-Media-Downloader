@@ -1,4 +1,5 @@
 import os
+import re
 import logging
 import json
 import traceback
@@ -101,6 +102,17 @@ def _is_wechat_channels(url: str) -> bool:
     lower_url = (url or '').lower()
     return 'findermp.video.qq.com' in lower_url or 'decodekey=' in lower_url or 'decode_key=' in lower_url
 
+def _sanitize_url(raw_url: str) -> str:
+    if not raw_url:
+        return ''
+    raw_url = raw_url.strip()
+    if validate_url(raw_url):
+        return raw_url
+    match = re.search(r'https?://[^\s\'"<>]+', raw_url)
+    if match and validate_url(match.group(0)):
+        return match.group(0)
+    return raw_url
+
 @api_bp.route('/info', methods=['POST'])
 def api_info():
     """获取视频详细信息 (用于前端解析格式)"""
@@ -109,7 +121,7 @@ def api_info():
         return jsonify({'error': 'Task manager not initialized'}), 500
 
     data = _safe_get_json(request)
-    url = data.get('url')
+    url = _sanitize_url(data.get('url'))
     if not url or not validate_url(url):
         return jsonify({'error': 'Invalid URL'}), 400
 
@@ -246,7 +258,7 @@ def stream_task():
         return "Task manager not initialized", 500
 
     # 从 URL 参数解析任务配置
-    url = request.args.get('url')
+    url = _sanitize_url(request.args.get('url'))
     if not url or not validate_url(url):
         def error_stream():
             yield f"data: {json.dumps({'error': 'Invalid URL'})}\n\n"
