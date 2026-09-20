@@ -9,6 +9,7 @@ import traceback
 import shutil
 from typing import Dict, List, Any, Optional
 from urllib.parse import urlparse, urlunparse
+from pathlib import Path
 
 from .models import Task
 from ..utils.errors import classify_error
@@ -181,17 +182,29 @@ def _cookiefile_domains(cookie_file: str) -> list[str]:
 def _site_cookie_candidates(url: str, cookie_file: str) -> list[str]:
     candidates: list[str] = []
     base_dirs: list[str] = []
+
+    def _add_with_parents(path_str: Optional[str]):
+        if not path_str:
+            return
+        try:
+            p = Path(path_str).resolve()
+            for _ in range(5):
+                base_dirs.append(str(p))
+                if p.parent == p:
+                    break
+                p = p.parent
+        except Exception:
+            pass
+
     if cookie_file:
-        base_dirs.append(os.path.dirname(os.path.abspath(cookie_file)))
+        _add_with_parents(os.path.dirname(os.path.abspath(cookie_file)))
+    _add_with_parents(os.getcwd())
+    if sys.argv and sys.argv[0]:
+        _add_with_parents(os.path.dirname(os.path.abspath(sys.argv[0])))
+    if getattr(sys, 'frozen', False):
+        _add_with_parents(os.path.dirname(os.path.abspath(sys.executable)))
     try:
-        base_dirs.append(os.getcwd())
-        if sys.argv and sys.argv[0]:
-            base_dirs.append(os.path.dirname(os.path.abspath(sys.argv[0])))
-        if getattr(sys, 'frozen', False):
-            base_dirs.append(os.path.dirname(os.path.abspath(sys.executable)))
-        from pathlib import Path
-        here = Path(__file__).resolve().parents[2]
-        base_dirs.append(str(here))
+        _add_with_parents(str(Path(__file__).resolve().parents[2]))
     except Exception:
         pass
 

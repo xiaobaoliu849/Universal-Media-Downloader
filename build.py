@@ -229,6 +229,8 @@ def build_app(extra_debug=False):
             ('cookies.example.txt', 'cookies.example.txt'),
             ('manual_cookies_guide.txt', 'manual_cookies_guide.txt'),
         ]
+        if Path('cookies.txt').exists():
+            required_files.append(('cookies.txt', 'cookies.txt'))
         fixed_any = False
         for src, rel in required_dirs:
             target = dist_root / rel

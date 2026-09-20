@@ -2,6 +2,7 @@ import os
 import sys
 import platform
 from pathlib import Path
+from typing import Optional
 
 # ---------------------------------------
 # 轻量 .env 加载 (在打包后的双击启动环境里通常没有提前设置环境变量)
@@ -207,16 +208,30 @@ def resource_path(relative_path: str) -> str:
 # --- 核心依赖路径 ---
 # 注意：这些路径都基于 resource_path，以确保在打包后也能正确定位文件。
 
-# Cookies 文件 (优先检查与 exe 同级的程序根目录，其次 cwd，再次 _internal)
+# Cookies 文件 (优先检查与 exe 同级及上级目录，确保在 dist/ 或子目录启动仍可命中项目根目录 cookies)
 def _get_effective_cookies_file() -> str:
     candidates = []
+    def _add_with_parents(base_str: Optional[str]):
+        if not base_str:
+            return
+        try:
+            p = Path(base_str).resolve()
+            for _ in range(5):
+                cand = str(p / "cookies.txt")
+                if cand not in candidates:
+                    candidates.append(cand)
+                if p.parent == p:
+                    break
+                p = p.parent
+        except Exception:
+            pass
+
     if getattr(sys, 'frozen', False):
-        exe_dir = os.path.dirname(sys.executable)
-        candidates.append(os.path.join(exe_dir, "cookies.txt"))
-    candidates.append(os.path.join(os.getcwd(), "cookies.txt"))
+        _add_with_parents(os.path.dirname(sys.executable))
+    _add_with_parents(os.getcwd())
     candidates.append(resource_path("cookies.txt"))
     try:
-        candidates.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "cookies.txt"))
+        _add_with_parents(os.path.dirname(os.path.abspath(__file__)))
     except Exception:
         pass
 

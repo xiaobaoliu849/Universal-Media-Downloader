@@ -10,10 +10,12 @@ except Exception:
     APP_VERSION = "0.0.0"
 
 def zip_dir(dir_path, zip_path):
-    """将文件夹压缩成 zip 文件"""
+    """将文件夹压缩成 zip 文件 (过滤掉个人私密 cookies.txt，仅保留 cookies.example.txt)"""
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
         for root, _, files in os.walk(dir_path):
             for file in files:
+                if file.lower() == 'cookies.txt':
+                    continue
                 file_path = os.path.join(root, file)
                 arcname = os.path.relpath(file_path, os.path.dirname(dir_path))
                 zipf.write(file_path, arcname)

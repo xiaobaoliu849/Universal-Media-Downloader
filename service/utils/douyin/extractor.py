@@ -8,6 +8,8 @@ import re
 from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 
+import sys
+from pathlib import Path
 import requests
 
 from .abogus import ABogus
@@ -70,15 +72,30 @@ def get_douyin_cookies(cookie_file: Optional[str]) -> Dict[str, str]:
     if cookie_file and os.path.exists(cookie_file):
         candidate_files.append(cookie_file)
 
-    # 自动搜索常见目录（exe 目录、当前工作目录、项目目录等），确保用户将 cookies.txt 放入任一位置均可被识别
-    search_dirs = [os.getcwd()]
+    # 自动搜索常见目录（exe 目录、向上查找所有父目录直至根目录、当前工作目录等），确保用户将 cookies.txt 放入任一位置均可被识别
+    search_dirs: list[str] = []
+
+    def _add_with_parents(path_str: Optional[str]):
+        if not path_str:
+            return
+        try:
+            p = Path(path_str).resolve()
+            for _ in range(5):
+                search_dirs.append(str(p))
+                if p.parent == p:
+                    break
+                p = p.parent
+        except Exception:
+            pass
+
+    _add_with_parents(os.getcwd())
+    if sys.argv and sys.argv[0]:
+        _add_with_parents(os.path.dirname(os.path.abspath(sys.argv[0])))
+    if getattr(sys, 'frozen', False):
+        _add_with_parents(os.path.dirname(os.path.abspath(sys.executable)))
     try:
-        if sys.argv and sys.argv[0]:
-            search_dirs.append(os.path.dirname(os.path.abspath(sys.argv[0])))
-        if getattr(sys, 'frozen', False):
-            search_dirs.append(os.path.dirname(os.path.abspath(sys.executable)))
         from pathlib import Path
-        search_dirs.append(str(Path(__file__).resolve().parents[3]))
+        _add_with_parents(str(Path(__file__).resolve().parent))
     except Exception:
         pass
 
