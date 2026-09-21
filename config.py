@@ -1,8 +1,64 @@
 import os
 import sys
 import platform
+import json
 from pathlib import Path
 from typing import Optional
+
+# ---------------------------------------
+# 用户配置持久化 (user_settings.json)
+# ---------------------------------------
+def _get_settings_file_path() -> Path:
+    """获取用户配置文件路径，优先使用程序同级目录，无权限则回退到 AppData"""
+    if getattr(sys, 'frozen', False):
+        base = Path(sys.executable).parent
+    else:
+        base = Path(__file__).resolve().parent
+    target = base / "user_settings.json"
+    try:
+        if target.exists():
+            if os.access(str(target), os.W_OK):
+                return target
+        else:
+            with open(target, 'a', encoding='utf-8') as f:
+                pass
+            target.unlink()
+            return target
+    except Exception:
+        pass
+    appdata = os.environ.get('APPDATA')
+    if appdata:
+        p = Path(appdata) / "Universal Media Downloader"
+        try:
+            p.mkdir(parents=True, exist_ok=True)
+            return p / "user_settings.json"
+        except Exception:
+            pass
+    return Path.home() / ".universal_media_downloader_settings.json"
+
+def load_user_settings() -> dict:
+    """读取用户自定义持久化配置"""
+    p = _get_settings_file_path()
+    if p.exists():
+        try:
+            with p.open('r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+def save_user_settings(settings: dict) -> bool:
+    """保存用户自定义持久化配置"""
+    p = _get_settings_file_path()
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with p.open('w', encoding='utf-8') as f:
+            json.dump(settings, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception as e:
+        sys.stderr.write(f"[WARN] 保存设置失败: {e}\n")
+        return False
+
 
 # ---------------------------------------
 # 轻量 .env 加载 (在打包后的双击启动环境里通常没有提前设置环境变量)
@@ -151,6 +207,18 @@ def _candidate_desktop_paths() -> list[Path]:
     return existing or candidates
 
 def resolve_download_root(folder_name: str = '流光视频下载') -> Path:
+    # 0. 优先使用用户在界面自定义并持久化的路径 (user_settings.json)
+    try:
+        settings = load_user_settings()
+        custom_dir = settings.get('download_dir')
+        if custom_dir:
+            p = Path(custom_dir).expanduser().resolve()
+            # 若父目录存在或目标目录存在，则使用
+            if p.exists() or p.parent.exists():
+                return p
+    except Exception:
+        pass
+
     # 1. 显式环境变量覆盖
     env_dir = os.environ.get('UMD_DOWNLOAD_DIR')
     if env_dir:

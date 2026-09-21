@@ -68,9 +68,22 @@ let lastFetchedUrl = '';     // 记录上次请求的URL
     document.addEventListener('DOMContentLoaded', () => {
         updateThemeBtn(savedTheme);
         loadYtdlpVersion();
+        loadDownloadDir();
         const updateBtn = document.getElementById('ytdlpUpdateBtn');
         if (updateBtn) {
             updateBtn.addEventListener('click', handleYtdlpUpdate);
+        }
+        const dirInput = document.getElementById('downloadDirInput');
+        if (dirInput) {
+            dirInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    dirInput.blur();
+                }
+            });
+            dirInput.addEventListener('change', () => {
+                saveDownloadDir();
+            });
         }
         const btn = document.getElementById('themeToggleBtn');
         if (btn) {
@@ -84,8 +97,18 @@ let lastFetchedUrl = '';     // 记录上次请求的URL
         }
     });
 
-    // 2. Toast 提示框系统
+    // 2. Toast 提示框系统 (带去重与防抖保护)
+    let lastToastKey = '';
+    let lastToastTime = 0;
     window.showToast = function(message, type = 'error') {
+        const now = Date.now();
+        const toastKey = `${type}:${message}`;
+        if (toastKey === lastToastKey && (now - lastToastTime) < 2000) {
+            return; // 2秒内相同消息忽略，防止重复提示
+        }
+        lastToastKey = toastKey;
+        lastToastTime = now;
+
         let container = document.getElementById('toastContainer');
         if (!container) {
             container = document.createElement('div');
@@ -165,13 +188,16 @@ let lastFetchedUrl = '';     // 记录上次请求的URL
                 Object.defineProperty(el, 'textContent', {
                     get() { return val; },
                     set(newVal) {
+                        const prevVal = val;
                         val = newVal;
                         el.innerText = newVal;
                         const progressFill = document.querySelector('.progress-fill');
                         if (progressFill) {
                             if (newVal === '完成') {
                                 progressFill.classList.add('finished');
-                                window.showToast('下载完成！文件已保存', 'success');
+                                if (prevVal !== '完成') {
+                                    window.showToast('下载完成！文件已保存', 'success');
+                                }
                             } else if (newVal === '队列中' || newVal === '下载中' || newVal === '合并处理中') {
                                 progressFill.classList.remove('finished');
                             }
@@ -1051,9 +1077,15 @@ async function openDownloadDir() {
     try {
         const r = await fetch('/api/open_download_dir', { method: 'POST' });
         const d = await r.json();
-        if (!d.success) { addLog('打开目录失败: ' + (d.error || '未知')); }
-        else { addLog('已请求打开目录: ' + d.path); }
-    } catch (e) { addLog('打开目录异常: ' + e, 'error'); }
+        if (!d.success) {
+            addLog('打开目录失败: ' + (d.error || '未知'), 'error');
+            window.showToast('打开目录失败: ' + (d.error || '未知'), 'error');
+        } else {
+            addLog('已请求打开目录: ' + d.path);
+        }
+    } catch (e) {
+        addLog('打开目录异常: ' + e, 'error');
+    }
 }
 
 async function revealLastFile() {
@@ -1072,4 +1104,93 @@ async function revealLastFile() {
     } catch (e) { addLog('显示最近文件异常: ' + e, 'error'); }
     finally { btn.disabled = false; }
 }
+
+// --- 下载保存目录管理 ---
+async function loadDownloadDir() {
+    const input = document.getElementById('downloadDirInput');
+    const space = document.getElementById('diskFreeSpace');
+    if (!input) return;
+    try {
+        const resp = await fetch('/api/download_dir');
+        const data = await resp.json();
+        if (data.success && data.path) {
+            input.value = data.path;
+            if (space) {
+                space.textContent = (typeof data.free_gb === 'number')
+                    ? `剩余空间: ${data.free_gb} GB 可用`
+                    : '剩余空间: 就绪';
+            }
+        }
+    } catch (e) {
+        console.error('加载保存目录失败', e);
+    }
+}
+
+async function chooseDownloadDir() {
+    const btn = document.getElementById('chooseDirBtn');
+    const input = document.getElementById('downloadDirInput');
+    const space = document.getElementById('diskFreeSpace');
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = '⏳ 选择中...';
+    }
+    try {
+        const resp = await fetch('/api/choose_download_dir', { method: 'POST' });
+        const data = await resp.json();
+        if (data.success && data.path) {
+            if (input) input.value = data.path;
+            if (space) {
+                space.textContent = (typeof data.free_gb === 'number')
+                    ? `剩余空间: ${data.free_gb} GB 可用`
+                    : '剩余空间: 就绪';
+            }
+            window.showToast(data.message || `下载目录已设置为: ${data.path}`, 'success');
+            addLog(`已切换下载目录: ${data.path}`);
+        } else if (!data.canceled) {
+            window.showToast(data.error || '选择目录失败', 'error');
+        }
+    } catch (e) {
+        window.showToast('请求选择目录异常: ' + (e.message || e), 'error');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = '📁 更改目录';
+        }
+    }
+}
+
+async function saveDownloadDir(customPath) {
+    const input = document.getElementById('downloadDirInput');
+    const space = document.getElementById('diskFreeSpace');
+    const targetPath = (customPath !== undefined ? customPath : (input ? input.value : '')).trim();
+    if (!targetPath) {
+        window.showToast('请输入有效的目录路径', 'warning');
+        return;
+    }
+    try {
+        const resp = await fetch('/api/download_dir', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: targetPath })
+        });
+        const data = await resp.json();
+        if (resp.ok && data.success) {
+            if (input) input.value = data.path;
+            if (space) {
+                space.textContent = (typeof data.free_gb === 'number')
+                    ? `剩余空间: ${data.free_gb} GB 可用`
+                    : '剩余空间: 就绪';
+            }
+            window.showToast(data.message || `下载目录已保存: ${data.path}`, 'success');
+            addLog(`保存下载目录: ${data.path}`);
+        } else {
+            window.showToast(data.error || '保存下载目录失败', 'error');
+            loadDownloadDir();
+        }
+    } catch (e) {
+        window.showToast('保存目录网络异常: ' + (e.message || e), 'error');
+        loadDownloadDir();
+    }
+}
+
 

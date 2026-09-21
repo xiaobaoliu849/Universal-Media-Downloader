@@ -86,6 +86,23 @@
                 <span id="fastStartHint">(需先获取一次视频信息)</span>
             </div>
 
+            <!-- 保存路径配置区域 -->
+            <div class="dir-setting-card">
+                <div class="dir-setting-header">
+                    <span class="dir-label">💾 保存目录</span>
+                    <span id="diskFreeSpace" class="dir-disk-space">剩余空间: 统计中...</span>
+                </div>
+                <div class="dir-setting-body">
+                    <div class="dir-input-wrapper">
+                        <input type="text" id="downloadDirInput" class="dir-input" placeholder="加载下载目录中..." spellcheck="false" title="可直接编辑或粘贴目录路径，按回车保存">
+                    </div>
+                    <div class="dir-actions">
+                        <button type="button" class="dir-action-btn primary" id="chooseDirBtn" onclick="chooseDownloadDir()" title="打开系统选择器挑选目录">📁 更改目录</button>
+                        <button type="button" class="dir-action-btn" id="openDirBtn" onclick="openDownloadDir()" title="在资源管理器中打开此目录">📂 打开</button>
+                    </div>
+                </div>
+            </div>
+
             <!-- 质量选择区域 -->
             <div class="options-row quality-section" id="qualitySection">
                 <div class="option-group">

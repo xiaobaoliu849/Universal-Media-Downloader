@@ -97,6 +97,12 @@ class TaskManager:
         with self.tasks_lock:
             return self.tasks.get(task_id)
 
+    def set_download_dir(self, new_dir: str):
+        """动态更新下载目录"""
+        with self.tasks_lock:
+            self.download_dir = new_dir
+        logger.info(f"TaskManager: 下载目录已更新为: {new_dir}")
+
     def list_tasks(self) -> List[Dict[str, Any]]:
         """列出所有任务"""
         with self.tasks_lock:

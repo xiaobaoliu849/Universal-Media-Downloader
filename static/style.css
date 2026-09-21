@@ -261,6 +261,119 @@ input[type="text"]::placeholder {
     font-weight: 500;
 }
 
+/* --- Download Directory Setting Card --- */
+.dir-setting-card {
+    background: rgba(255, 255, 255, 0.6);
+    border: 1px solid var(--border-input);
+    border-radius: 12px;
+    padding: 14px 18px;
+    margin-bottom: 24px;
+    backdrop-filter: var(--glass-blur);
+    box-shadow: var(--shadow-sm);
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.dir-setting-card:focus-within {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+}
+
+.dir-setting-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.dir-label {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.dir-disk-space {
+    font-size: 12px;
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.dir-setting-body {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.dir-input-wrapper {
+    flex: 1;
+    position: relative;
+}
+
+.dir-input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 10px 14px;
+    font-size: 13px;
+    border: 1px solid var(--border-input);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.9);
+    color: var(--text-primary);
+    font-family: inherit;
+    transition: all var(--transition-fast);
+}
+
+.dir-input:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    background: #ffffff;
+}
+
+.dir-actions {
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.dir-action-btn {
+    padding: 9px 15px;
+    border: 1px solid var(--border-input);
+    background: #ffffff;
+    color: var(--text-primary);
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    white-space: nowrap;
+}
+
+.dir-action-btn:hover {
+    background: #f1f5f9;
+    border-color: #cbd5e1;
+    transform: translateY(-1px);
+}
+
+.dir-action-btn.primary {
+    background: linear-gradient(135deg, #4f46e5 0%, #3b82f6 100%);
+    color: #ffffff;
+    border: none;
+    box-shadow: 0 2px 6px rgba(79, 70, 229, 0.25);
+}
+
+.dir-action-btn.primary:hover {
+    box-shadow: 0 4px 12px rgba(79, 70, 229, 0.35);
+    transform: translateY(-1px);
+}
+
+.dir-action-btn:active {
+    transform: translateY(0);
+}
+
 /* --- Options Section (Quality / Mode Layout) --- */
 .options-row {
     display: flex;
@@ -848,6 +961,39 @@ select:focus {
 [data-theme="dark"] .settings-group {
     background: rgba(15, 23, 42, 0.4);
     border-color: #334155;
+}
+
+[data-theme="dark"] .dir-setting-card {
+    background: rgba(30, 41, 59, 0.4);
+    border-color: #334155;
+}
+
+[data-theme="dark"] .dir-input {
+    background: rgba(15, 23, 42, 0.7);
+    border-color: #334155;
+    color: #f8fafc;
+}
+
+[data-theme="dark"] .dir-input:focus {
+    background: #0f172a;
+    border-color: var(--primary-color);
+}
+
+[data-theme="dark"] .dir-action-btn {
+    background: #1e293b;
+    border-color: #334155;
+    color: #cbd5e1;
+}
+
+[data-theme="dark"] .dir-action-btn:hover {
+    background: #334155;
+    color: #ffffff;
+}
+
+[data-theme="dark"] .dir-action-btn.primary {
+    background: linear-gradient(135deg, #6366f1 0%, #3b82f6 100%);
+    color: #ffffff;
+    border: none;
 }
 
 [data-theme="dark"] #qualitySection .radio-option label {

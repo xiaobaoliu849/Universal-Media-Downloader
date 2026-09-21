@@ -143,6 +143,7 @@ nul
 # Local config files
 config_local.py
 settings_local.py
+user_settings.json
 
 # Logs
 *.log

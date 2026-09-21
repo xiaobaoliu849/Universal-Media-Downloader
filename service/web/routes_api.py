@@ -4,7 +4,11 @@ import logging
 import json
 import traceback
 import urllib.parse
+import shutil
+import platform
+import subprocess
 from flask import Blueprint, request, jsonify, Response
+import config
 from service.tasks.manager import get_task_manager
 from service.utils.common import validate_url, _safe_get_json
 from service.utils.cache import LRUCache, _get_inflight, _create_inflight, _publish_and_cleanup_inflight, _force_cleanup_inflight
@@ -436,4 +440,151 @@ def api_ytdlp_update():
     result = update_ytdlp()
     status_code = 200 if result.get('success') else 400
     return jsonify(result), status_code
+
+
+@api_bp.route('/download_dir', methods=['GET'])
+def api_get_download_dir():
+    """获取当前下载保存路径及剩余可用磁盘空间"""
+    tm = get_task_manager()
+    current_dir = tm.download_dir if tm else getattr(config, 'DOWNLOAD_DIR', '')
+    free_gb = None
+    try:
+        if current_dir and os.path.exists(current_dir):
+            total, used, free = shutil.disk_usage(current_dir)
+            free_gb = round(free / (1024 ** 3), 1)
+        elif current_dir:
+            drive = os.path.splitdrive(current_dir)[0] or os.path.dirname(current_dir)
+            if drive and os.path.exists(drive):
+                total, used, free = shutil.disk_usage(drive)
+                free_gb = round(free / (1024 ** 3), 1)
+    except Exception:
+        pass
+    return jsonify({
+        'success': True,
+        'path': current_dir,
+        'free_gb': free_gb
+    })
+
+
+@api_bp.route('/download_dir', methods=['POST'])
+def api_set_download_dir():
+    """设置并持久化自定义下载保存路径"""
+    data = _safe_get_json(request)
+    new_path = (data.get('path') or '').strip()
+    if not new_path:
+        return jsonify({'success': False, 'error': '下载路径不能为空'}), 400
+
+    new_path = os.path.abspath(os.path.expanduser(new_path))
+    try:
+        os.makedirs(new_path, exist_ok=True)
+        test_file = os.path.join(new_path, f".umd_perm_test_{os.getpid()}")
+        with open(test_file, 'w', encoding='utf-8') as f:
+            f.write('ok')
+        if os.path.exists(test_file):
+            os.remove(test_file)
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'无法使用该目录: {e}'}), 400
+
+    tm = get_task_manager()
+    if tm:
+        tm.set_download_dir(new_path)
+    config.DOWNLOAD_DIR = new_path
+
+    try:
+        settings = config.load_user_settings()
+        settings['download_dir'] = new_path
+        config.save_user_settings(settings)
+    except Exception as e:
+        logger.warning(f"保存 user_settings.json 异常: {e}")
+
+    free_gb = None
+    try:
+        total, used, free = shutil.disk_usage(new_path)
+        free_gb = round(free / (1024 ** 3), 1)
+    except Exception:
+        pass
+
+    return jsonify({
+        'success': True,
+        'path': new_path,
+        'free_gb': free_gb,
+        'message': f'保存路径已更新为: {new_path}'
+    })
+
+
+@api_bp.route('/choose_download_dir', methods=['POST'])
+def api_choose_download_dir():
+    """在 Windows 系统下弹出原生文件夹选择器"""
+    if platform.system().lower() != 'windows':
+        return jsonify({'success': False, 'error': '该功能仅支持 Windows 系统'}), 400
+
+    tm = get_task_manager()
+    initial_dir = tm.download_dir if tm else getattr(config, 'DOWNLOAD_DIR', '')
+
+    try:
+        ps_code = (
+            "[System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms') | Out-Null;\n"
+            "$dialog = New-Object System.Windows.Forms.FolderBrowserDialog;\n"
+            "$dialog.Description = '请选择视频下载保存目录 (建议选择剩余空间充足的分区，如 D盘、E盘)';"
+            "$dialog.ShowNewFolderButton = $true;\n"
+        )
+        if initial_dir and os.path.exists(initial_dir):
+            safe_init = initial_dir.replace("'", "''")
+            ps_code += f"$dialog.SelectedPath = '{safe_init}';\n"
+        ps_code += (
+            "if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {\n"
+            "    [Console]::Out.Write($dialog.SelectedPath)\n"
+            "}\n"
+        )
+        p = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-STA", "-Command", ps_code],
+            capture_output=True,
+            text=True,
+            timeout=120
+        )
+        chosen = (p.stdout or '').strip()
+    except Exception as e:
+        logger.error(f"[ChooseDir] 弹出目录选择窗口失败: {e}")
+        return jsonify({'success': False, 'error': f'启动系统目录选择失败: {e}'}), 500
+
+    if chosen:
+        chosen_abs = os.path.abspath(chosen)
+        try:
+            os.makedirs(chosen_abs, exist_ok=True)
+            test_file = os.path.join(chosen_abs, f".umd_perm_test_{os.getpid()}")
+            with open(test_file, 'w', encoding='utf-8') as f:
+                f.write('ok')
+            if os.path.exists(test_file):
+                os.remove(test_file)
+        except Exception as e:
+            return jsonify({'success': False, 'error': f'所选目录无写入权限: {e}'}), 400
+
+        tm = get_task_manager()
+        if tm:
+            tm.set_download_dir(chosen_abs)
+        config.DOWNLOAD_DIR = chosen_abs
+
+        try:
+            settings = config.load_user_settings()
+            settings['download_dir'] = chosen_abs
+            config.save_user_settings(settings)
+        except Exception as e:
+            logger.warning(f"保存 user_settings.json 异常: {e}")
+
+        free_gb = None
+        try:
+            total, used, free = shutil.disk_usage(chosen_abs)
+            free_gb = round(free / (1024 ** 3), 1)
+        except Exception:
+            pass
+
+        return jsonify({
+            'success': True,
+            'path': chosen_abs,
+            'free_gb': free_gb,
+            'message': f'下载目录已切换为: {chosen_abs}'
+        })
+    else:
+        return jsonify({'success': False, 'canceled': True})
+
 
