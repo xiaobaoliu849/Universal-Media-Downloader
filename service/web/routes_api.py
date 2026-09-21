@@ -350,6 +350,8 @@ def stream_task():
                 'status': t.status,
                 'stage': t.stage,
                 'progress': t.progress,
+                'speed': t.speed,
+                'eta': t.eta,
                 'title': t.title,
                 'file_path': t.file_path,
                 'error_message': t.error_message,

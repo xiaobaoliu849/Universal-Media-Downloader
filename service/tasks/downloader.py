@@ -1387,7 +1387,14 @@ def _execute_media_download(manager: Any, task: Task, base_template: str):
                         pct = float(m.group(1))
                         if task.first_progress_ts is None:
                             task.first_progress_ts = time.time()
-                        manager._update_task(task, progress=pct, stage='downloading')
+                        update_kwargs = {'progress': pct, 'stage': 'downloading'}
+                        speed_m = re.search(r"at\s+([~0-9\.]+\s*[kKmMgGtT]?[iI]?[bB]/s)", line_str)
+                        eta_m = re.search(r"ETA\s+([0-9:]+)", line_str)
+                        if eta_m:
+                            update_kwargs['eta'] = eta_m.group(1)
+                        if speed_m:
+                            update_kwargs['speed'] = speed_m.group(1)
+                        manager._update_task(task, **update_kwargs)
                     elif 'Merging formats' in line_str or 'Merger' in line_str:
                         manager._update_task(task, stage='merging')
         finally:

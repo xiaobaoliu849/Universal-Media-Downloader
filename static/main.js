@@ -898,22 +898,39 @@ function downloadMedia() {
             updateStageStatus(data.stage, data.status);
             if (typeof data.progress === 'number') {
                 const pct = Math.min(100, Math.max(0, data.progress));
-                progressBar.style.width = pct + '%';
+                const currentBar = progressBar || document.querySelector('.progress-fill');
+                if (currentBar) {
+                    currentBar.style.width = pct + '%';
+                }
                 progressPercent.textContent = pct.toFixed(1) + '%';
-                // 简单 ETA 估算
-                const elapsed = (Date.now() - downloadStartTime) / 1000;
-                if (pct > 0 && pct < 100) {
-                    const remaining = elapsed * (100 - pct) / pct;
-                    const m = Math.floor(remaining / 60);
-                    const s = Math.floor(remaining % 60);
-                    remainingTime.textContent = `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-                } else if (pct >= 100) {
-                    remainingTime.textContent = '00:00';
+                
+                // 优先使用真实 ETA，若无则使用基于已耗时的平滑估算
+                if (data.eta && data.eta !== 'Unknown' && data.eta.trim()) {
+                    remainingTime.textContent = data.eta.trim();
+                } else {
+                    const elapsed = (Date.now() - downloadStartTime) / 1000;
+                    if (pct > 0 && pct < 100) {
+                        const remaining = elapsed * (100 - pct) / pct;
+                        const m = Math.floor(remaining / 60);
+                        const s = Math.floor(remaining % 60);
+                        if (m >= 60) {
+                            const h = Math.floor(m / 60);
+                            const remM = m % 60;
+                            remainingTime.textContent = `${h.toString().padStart(2, '0')}:${remM.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+                        } else {
+                            remainingTime.textContent = `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+                        }
+                    } else if (pct >= 100) {
+                        remainingTime.textContent = '00:00';
+                    }
                 }
             }
             if (data.status === 'finished') {
                 addLog('任务完成: ' + (data.file_path || ''));
-                progressBar.style.width = '100%';
+                const currentBar = progressBar || document.querySelector('.progress-fill');
+                if (currentBar) {
+                    currentBar.style.width = '100%';
+                }
                 progressPercent.textContent = '100%';
                 updateStageStatus('finished');
                 remainingTime.textContent = '00:00';
