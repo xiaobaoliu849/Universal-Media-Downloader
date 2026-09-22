@@ -11,6 +11,7 @@ from flask import Blueprint, request, jsonify, Response
 import config
 from service.tasks.manager import get_task_manager
 from service.utils.common import validate_url, _safe_get_json
+from service.utils.windows_dialogs import choose_folder_native
 from service.utils.cache import LRUCache, _get_inflight, _create_inflight, _publish_and_cleanup_inflight, _force_cleanup_inflight
 
 logger = logging.getLogger(__name__)
@@ -415,9 +416,10 @@ def reveal_file():
     
     target_path = os.path.join(tm.download_dir, name)
     if os.path.exists(target_path):
-        import shlex
         try:
-            subprocess.run(f'explorer /select,"{target_path}"', shell=True)
+            norm_target = os.path.normpath(target_path)
+            creationflags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
+            subprocess.run(['explorer', f'/select,{norm_target}'], creationflags=creationflags)
             return jsonify({'success': True})
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)})
@@ -514,7 +516,7 @@ def api_set_download_dir():
 
 @api_bp.route('/choose_download_dir', methods=['POST'])
 def api_choose_download_dir():
-    """在 Windows 系统下弹出原生文件夹选择器"""
+    """在 Windows 系统下弹出原生现代文件夹选择器 (零控制台黑框，微秒级响应)"""
     if platform.system().lower() != 'windows':
         return jsonify({'success': False, 'error': '该功能仅支持 Windows 系统'}), 400
 
@@ -522,27 +524,10 @@ def api_choose_download_dir():
     initial_dir = tm.download_dir if tm else getattr(config, 'DOWNLOAD_DIR', '')
 
     try:
-        ps_code = (
-            "[System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms') | Out-Null;\n"
-            "$dialog = New-Object System.Windows.Forms.FolderBrowserDialog;\n"
-            "$dialog.Description = '请选择视频下载保存目录 (建议选择剩余空间充足的分区，如 D盘、E盘)';"
-            "$dialog.ShowNewFolderButton = $true;\n"
+        chosen = choose_folder_native(
+            initial_dir=initial_dir,
+            title='请选择视频下载保存目录 (建议选择剩余空间充足的分区，如 D盘、E盘)'
         )
-        if initial_dir and os.path.exists(initial_dir):
-            safe_init = initial_dir.replace("'", "''")
-            ps_code += f"$dialog.SelectedPath = '{safe_init}';\n"
-        ps_code += (
-            "if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {\n"
-            "    [Console]::Out.Write($dialog.SelectedPath)\n"
-            "}\n"
-        )
-        p = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-STA", "-Command", ps_code],
-            capture_output=True,
-            text=True,
-            timeout=120
-        )
-        chosen = (p.stdout or '').strip()
     except Exception as e:
         logger.error(f"[ChooseDir] 弹出目录选择窗口失败: {e}")
         return jsonify({'success': False, 'error': f'启动系统目录选择失败: {e}'}), 500
