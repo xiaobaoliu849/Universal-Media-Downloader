@@ -118,29 +118,52 @@ def get_ytdlp_version():
 
 _ytdlp_update_lock = threading.Lock()
 
-def check_ytdlp_update():
+def _get_update_proxy_args() -> list[str]:
+    proxy_url = os.environ.get('LUMINA_PROXY') or os.environ.get('UMD_PROXY') or getattr(config, 'PROXY_URL', '')
+    if not proxy_url:
+        return []
+    import socket
+    from urllib.parse import urlparse
+    try:
+        parsed = urlparse(proxy_url)
+        host = parsed.hostname or ''
+        port = parsed.port
+        if host in ('127.0.0.1', 'localhost', '::1') and port:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(0.4)
+            res = s.connect_ex((host, port))
+            s.close()
+            if res != 0:
+                return []
+    except Exception:
+        pass
+    return ['--proxy', proxy_url]
+
+def check_ytdlp_update(channel: str = 'stable'):
     """检查 yt-dlp 是否有更新"""
     try:
         current_version = get_ytdlp_version()
         if not current_version:
             return {'error': '无法获取当前版本'}
 
-        result = subprocess.run([config.YTDLP_PATH, '--update-to', 'stable'], capture_output=True, text=True, encoding='utf-8', errors='ignore', creationflags=CREATE_NO_WINDOW, timeout=30)
+        ch = channel if channel in ('stable', 'nightly', 'master') else 'stable'
+        cmd = [config.YTDLP_PATH, '--update-to', ch] + _get_update_proxy_args()
+        result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='ignore', creationflags=CREATE_NO_WINDOW, timeout=30)
 
         if 'yt-dlp is up to date' in result.stdout:
-            return {'status': 'up_to_date', 'current_version': current_version}
+            return {'status': 'up_to_date', 'current_version': current_version, 'channel': ch}
         elif 'Updated yt-dlp to' in result.stdout:
             new_version = get_ytdlp_version()
-            return {'status': 'updated', 'old_version': current_version, 'new_version': new_version}
+            return {'status': 'updated', 'old_version': current_version, 'new_version': new_version, 'channel': ch}
         else:
-            return {'status': 'update_available', 'current_version': current_version}
+            return {'status': 'update_available', 'current_version': current_version, 'channel': ch}
 
     except Exception as e:
         logger.error(f"检查 yt-dlp 更新失败: {e}")
         return {'error': str(e)}
 
-def update_ytdlp():
-    """强制更新 yt-dlp 到最新稳定版 (带防并发锁与活跃任务冲突检测)"""
+def update_ytdlp(channel: str = 'stable'):
+    """强制更新 yt-dlp 到指定版本通道 (stable 或 nightly)"""
     if not _ytdlp_update_lock.acquire(blocking=False):
         return {'success': False, 'message': '当前已有更新进程在运行中，请勿重复操作'}
     try:
@@ -153,19 +176,27 @@ def update_ytdlp():
         except Exception:
             pass
 
-        logger.info("开始更新 yt-dlp...")
-        result = subprocess.run([config.YTDLP_PATH, '--update-to', 'stable'], capture_output=True, text=True, encoding='utf-8', errors='ignore', creationflags=CREATE_NO_WINDOW, timeout=90)
+        ch = channel if channel in ('stable', 'nightly', 'master') else 'stable'
+        logger.info(f"开始更新 yt-dlp 到通道: {ch}...")
+        
+        proxy_args = _get_update_proxy_args()
+        cmd = [config.YTDLP_PATH, '--update-to', ch] + proxy_args
+        result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='ignore', creationflags=CREATE_NO_WINDOW, timeout=90)
+
+        # 若带代理失败，尝试无代理直连重试
+        if result.returncode != 0 and proxy_args:
+            logger.warning("带代理更新失败，尝试直连重试更新...")
+            cmd_direct = [config.YTDLP_PATH, '--update-to', ch]
+            result = subprocess.run(cmd_direct, capture_output=True, text=True, encoding='utf-8', errors='ignore', creationflags=CREATE_NO_WINDOW, timeout=90)
 
         if result.returncode == 0:
+            new_version = get_ytdlp_version() or '最新'
             if 'Updated yt-dlp to' in result.stdout:
-                new_version = get_ytdlp_version()
                 logger.info(f"yt-dlp 更新成功，新版本: {new_version}")
                 return {'success': True, 'message': f'更新成功，当前版本: {new_version}', 'new_version': new_version}
             elif 'yt-dlp is up to date' in result.stdout:
-                current_version = get_ytdlp_version()
-                return {'success': True, 'message': f'当前已是最新版本 ({current_version})', 'current_version': current_version}
+                return {'success': True, 'message': f'当前已是最新版本 ({new_version})', 'current_version': new_version}
             else:
-                new_version = get_ytdlp_version()
                 return {'success': True, 'message': f'更新完成，当前版本: {new_version}', 'new_version': new_version}
         else:
             error_msg = (result.stderr or result.stdout or '未知错误').strip()

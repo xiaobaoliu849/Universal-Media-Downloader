@@ -437,9 +437,11 @@ def api_ytdlp_version():
 
 @api_bp.route('/ytdlp/update', methods=['POST'])
 def api_ytdlp_update():
-    """触发 yt-dlp 内核更新到最新稳定版"""
+    """触发 yt-dlp 内核更新 (支持 stable / nightly)"""
     from service.utils.dependencies import update_ytdlp
-    result = update_ytdlp()
+    req_data = request.get_json(silent=True) or {}
+    channel = request.args.get('channel') or req_data.get('channel') or 'stable'
+    result = update_ytdlp(channel=channel)
     status_code = 200 if result.get('success') else 400
     return jsonify(result), status_code
 

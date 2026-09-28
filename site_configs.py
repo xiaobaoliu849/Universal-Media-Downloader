@@ -140,26 +140,17 @@ class SiteConfig:
             settings['fragment_retries'] = 5 if fast_mode else 10
             settings['args'] += [
                 '--retry-sleep', '3',
-                '--extractor-args', 'youtube:player_client=android,web',
-                '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-                '--add-header', 'Accept-Language:en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7',
-                '--add-header', 'Referer:https://www.youtube.com/'
+                '--extractor-args', 'youtube:player_client=default',
             ]
             
             if extended:
-                 settings['timeout'] = 40 if fast_mode else 60
-                 settings['retries'] = 7 if fast_mode else 8
-                 settings['fragment_retries'] = 8 if fast_mode else 15
-                 settings['args'] += [
-                     '--retry-sleep', '5',
-                     '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0',
-                     '--add-header', 'Accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-                     '--add-header', 'Accept-Encoding:gzip, deflate, br',
-                     '--add-header', 'Cache-Control:max-age=0',
-                     '--add-header', 'DNT:1',
-                     '--add-header', 'Origin:https://www.youtube.com',
-                     '--sleep-interval', '3', '--max-sleep-interval', '7'
-                 ]
+                settings['timeout'] = 40 if fast_mode else 60
+                settings['retries'] = 7 if fast_mode else 8
+                settings['fragment_retries'] = 8 if fast_mode else 15
+                settings['args'] += [
+                    '--retry-sleep', '5',
+                    '--sleep-interval', '3', '--max-sleep-interval', '7'
+                ]
 
         # --- Douyin/TikTok Configuration ---
         elif self.is_douyin:

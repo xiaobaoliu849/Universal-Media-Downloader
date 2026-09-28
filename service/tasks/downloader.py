@@ -30,6 +30,35 @@ YOUTUBE_RICH_EXTRACTOR_ARGS = 'youtube:player_client=default'
 
 _YTDLP_PLUGIN_DIR_CACHE = None
 _JS_RUNTIME_CACHE = None
+_PROXY_ALIVE_CACHE = {}
+
+def _is_proxy_alive(proxy_url: str) -> bool:
+    """Quickly check if a localhost proxy is actually listening to avoid long timeouts."""
+    if not proxy_url:
+        return False
+    cached = _PROXY_ALIVE_CACHE.get(proxy_url)
+    if cached is not None and (time.time() - cached[1] < 30):
+        return cached[0]
+
+    import socket
+    try:
+        parsed = urlparse(proxy_url)
+        host = parsed.hostname or ''
+        port = parsed.port
+        if host in ('127.0.0.1', 'localhost', '::1') and port:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(0.4)
+            res = s.connect_ex((host, port))
+            s.close()
+            alive = (res == 0)
+            _PROXY_ALIVE_CACHE[proxy_url] = (alive, time.time())
+            if not alive:
+                logger.warning(f"[PROXY] 本地代理 {proxy_url} 无法连接 (端口未监听)，自动跳过代理直连")
+            return alive
+    except Exception:
+        pass
+    _PROXY_ALIVE_CACHE[proxy_url] = (True, time.time())
+    return True
 
 def _get_js_runtime_args() -> List[str]:
     """Detect Node.js or Deno on system to evaluate YouTube JS challenges."""
@@ -37,14 +66,30 @@ def _get_js_runtime_args() -> List[str]:
     if _JS_RUNTIME_CACHE is not None:
         return list(_JS_RUNTIME_CACHE)
 
-    node_path = shutil.which('node')
+    # 1. 尝试 PATH 中的 node
+    node_path = shutil.which('node') or shutil.which('node.exe')
+    
+    # 2. 检查 Windows 常见安装路径 (避免 GUI/快捷方式启动时 PATH 缺失)
+    if not node_path and os.name == 'nt':
+        cand_paths = [
+            r'D:\Program Files\nodejs\node.exe',
+            r'C:\Program Files\nodejs\node.exe',
+            r'C:\Program Files (x86)\nodejs\node.exe',
+            os.path.expandvars(r'%LOCALAPPDATA%\Programs\node\node.exe'),
+            os.path.expandvars(r'%APPDATA%\npm\node.exe'),
+        ]
+        for p in cand_paths:
+            if os.path.isfile(p):
+                node_path = p
+                break
+
     if node_path:
-        _JS_RUNTIME_CACHE = ['--js-runtimes', 'node']
+        _JS_RUNTIME_CACHE = ['--js-runtimes', f'node:{node_path}']
         return list(_JS_RUNTIME_CACHE)
 
-    deno_path = shutil.which('deno')
+    deno_path = shutil.which('deno') or shutil.which('deno.exe')
     if deno_path:
-        _JS_RUNTIME_CACHE = ['--js-runtimes', 'deno']
+        _JS_RUNTIME_CACHE = ['--js-runtimes', f'deno:{deno_path}']
         return list(_JS_RUNTIME_CACHE)
 
     _JS_RUNTIME_CACHE = []
@@ -230,6 +275,20 @@ def _site_cookie_candidates(url: str, cookie_file: str) -> list[str]:
                             candidates.append(path)
             except Exception:
                 pass
+        if _is_youtube_url(url):
+            for name in ('cookies_youtube.txt', 'cookies-youtube.txt', 'youtube.cookies.txt', 'cookies.txt'):
+                path = os.path.join(bd, name)
+                if path not in candidates and os.path.exists(path):
+                    candidates.append(path)
+            try:
+                for name in os.listdir(bd):
+                    lower = name.lower()
+                    if ('youtube' in lower or 'cookie' in lower) and lower.endswith('.txt'):
+                        path = os.path.join(bd, name)
+                        if path not in candidates and os.path.exists(path):
+                            candidates.append(path)
+            except Exception:
+                pass
         if is_douyin_url(url):
             for name in ('cookies_douyin.txt', 'cookies-douyin.txt', 'douyin.cookies.txt', 'cookies.txt'):
                 path = os.path.join(bd, name)
@@ -248,6 +307,10 @@ def _site_cookie_candidates(url: str, cookie_file: str) -> list[str]:
     if cookie_file and cookie_file not in candidates and os.path.exists(cookie_file):
         candidates.append(cookie_file)
     return candidates
+
+def _is_youtube_url(url: str) -> bool:
+    lower = (url or '').lower()
+    return 'youtube.com' in lower or 'youtu.be' in lower
 
 def _cookiefile_has_host(cookie_file: str, url: str) -> bool:
     host = (urlparse(url).hostname or '').lower()
@@ -273,6 +336,9 @@ def _cookiefile_has_site_cookie(cookie_file: str, url: str) -> bool:
         return False
     if _is_missav_url(url):
         return any('missav' in domain for domain in _cookiefile_domains(cookie_file))
+    if _is_youtube_url(url):
+        domains = _cookiefile_domains(cookie_file)
+        return any('youtube.com' in d or 'google.com' in d for d in domains)
     return _cookiefile_has_host(cookie_file, url)
 
 def _select_cookie_file(url: str, cookie_file: str) -> Optional[str]:
@@ -303,6 +369,7 @@ def _should_try_browser_cookies(url: str, cookie_file: str) -> bool:
     force_browser = (
         (os.environ.get('LUMINA_FORCE_BROWSER_COOKIES') or os.environ.get('UMD_FORCE_BROWSER_COOKIES', '')).lower()
         in ('1', 'true', 'yes')
+        or (os.environ.get('USE_BROWSER_COOKIES', '')).lower() in ('1', 'true', 'yes')
     )
     disable_browser = (
         (os.environ.get('LUMINA_DISABLE_BROWSER_COOKIES') or os.environ.get('UMD_DISABLE_BROWSER_COOKIES', '')).lower()
@@ -315,12 +382,13 @@ def _should_try_browser_cookies(url: str, cookie_file: str) -> bool:
 
     lower_url = (url or '').lower()
     is_missav = 'missav' in lower_url
-    if not is_missav:
+    is_youtube = 'youtube.com' in lower_url or 'youtu.be' in lower_url
+    if not is_missav and not is_youtube:
         return False
 
-    if not os.path.exists(cookie_file):
+    if not cookie_file or not os.path.exists(cookie_file):
         return True
-    return not _cookiefile_has_host(cookie_file, url)
+    return not _cookiefile_has_site_cookie(cookie_file, url)
 
 def _force_browser_cookies_enabled() -> bool:
     disable_browser = (
@@ -471,7 +539,10 @@ def _probe_info(manager: Any, task: Task) -> Dict[str, Any]:
     is_youtube = 'youtube.com' in lower_url or 'youtu.be' in lower_url
 
     if proxy_url:
-        cmd += ['--proxy', proxy_url]
+        if _is_proxy_alive(proxy_url):
+            cmd += ['--proxy', proxy_url]
+        else:
+            logger.warning(f"[PROBE] 本地代理 {proxy_url} 无法连接，自动跳过直连")
     if task.geo_bypass:
         cmd.append('--geo-bypass')
 
@@ -1226,7 +1297,10 @@ def _execute_media_download(manager: Any, task: Task, base_template: str):
         except ImportError:
             proxy_url = os.environ.get('LUMINA_PROXY') or os.environ.get('UMD_PROXY', '')
         if proxy_url and not force_no_proxy:
-            a += ['--proxy', proxy_url]
+            if _is_proxy_alive(proxy_url):
+                a += ['--proxy', proxy_url]
+            else:
+                task.log.append(f'[proxy] 本地代理 {proxy_url} 未监听，自动跳过直连')
         elif proxy_url and force_no_proxy:
             task.log.append('[proxy] 代理已禁用（回退直连）')
 
@@ -1243,9 +1317,7 @@ def _execute_media_download(manager: Any, task: Task, base_template: str):
         logger.info(f"[COOKIES-DEBUG] cookies_file={cookies_path}, exists={cookies_exists}")
         task.log.append(f"[cookies] 路径: {cookies_path}, 存在: {cookies_exists}")
 
-        # YouTube 特殊处理：
-        # 默认使用 android client（通常可绕过 n challenge，且无需 cookies）
-        # 若触发“Sign in to confirm you're not a bot”，会在外层切换到 cookies 鉴权重试
+        # 站点与 Cookie 处理：
         is_youtube = 'youtube.com' in effective_url.lower() or 'youtu.be' in effective_url.lower()
         use_browser_cookies = (
             (os.environ.get('USE_BROWSER_COOKIES') or '').lower() in ('1', 'true', 'yes')
@@ -1253,43 +1325,49 @@ def _execute_media_download(manager: Any, task: Task, base_template: str):
         )
         if force_browser_cookies:
             use_browser_cookies = True
-        prefer_rich_youtube_client = bool(direct_selector) or _wants_specific_youtube_quality(task)
+
         if is_youtube:
             a = _strip_youtube_extractor_args(a)
-        if is_youtube and not youtube_auth_with_cookies:
-            if prefer_rich_youtube_client:
-                a += ['--extractor-args', YOUTUBE_RICH_EXTRACTOR_ARGS]
-                task.log.append('[youtube] 使用 default client（优先保留完整格式）')
-                logger.info(f"[YOUTUBE] Task {task.id}: 使用 default client 以匹配前端质量列表")
-            else:
-                a += ['--extractor-args', 'youtube:player_client=android']
-                task.log.append('[youtube] 使用 android client（下载阶段）')
-                logger.info(f"[YOUTUBE] Task {task.id}: 使用 android client，跳过 cookies")
-        elif is_youtube:
-            task.log.append('[youtube] 切换 cookies 鉴权模式（关闭 android client）')
-            logger.info(f"[YOUTUBE] Task {task.id}: 切换 cookies 鉴权模式")
             if youtube_tv_client:
                 a += ['--extractor-args', 'youtube:player_client=tv,web']
-                task.log.append('[youtube] 使用 tv client（cookies 模式）')
+                task.log.append('[youtube] 使用 tv,web client 模式')
             else:
                 a += ['--extractor-args', YOUTUBE_RICH_EXTRACTOR_ARGS]
+
+            # YouTube Cookies 应用策略：
+            # 1. 优先使用已探测到的有效 cookies 文件
+            # 2. 如果启用了浏览器 cookies，则添加浏览器 cookies
+            # 3. 如果触发了鉴权模式 (youtube_auth_with_cookies)，则强制应用可用 cookies
+            has_yt_cookies = selected_cookie_file and _cookiefile_has_site_cookie(selected_cookie_file, effective_url)
             if use_browser_cookies:
                 browser = _choose_browser_cookie_source(task)
                 a += ['--cookies-from-browser', browser]
-                task.log.append(f'[cookies] 已添加 --cookies-from-browser {browser}')
+                task.log.append(f'[cookies] YouTube 已添加 --cookies-from-browser {browser}')
+            elif has_yt_cookies:
+                a += ['--cookies', selected_cookie_file]
+                task.log.append(f"[cookies] YouTube 使用 cookies 文件: {selected_cookie_file}")
+                logger.info(f"[COOKIES] YouTube 已添加 --cookies {selected_cookie_file}")
+            elif youtube_auth_with_cookies:
+                if cookies_exists:
+                    a += ['--cookies', cookies_path]
+                    task.log.append(f"[cookies] YouTube 鉴权模式已添加 --cookies {cookies_path}")
+                    logger.info(f"[COOKIES] YouTube 鉴权模式已添加 --cookies {cookies_path}")
+                elif _should_try_browser_cookies(effective_url, manager.cookies_file):
+                    browser = _choose_browser_cookie_source(task)
+                    a += ['--cookies-from-browser', browser]
+                    task.log.append(f'[cookies] YouTube 鉴权模式改用浏览器 cookies ({browser})')
+                else:
+                    task.log.append('[cookies] 鉴权模式警告: 未找到可用 cookies 文件')
             elif cookies_exists:
+                # 即使未进入鉴权模式，只要本地存在 cookies.txt，也作为首选带上以防 403
                 a += ['--cookies', cookies_path]
-                task.log.append(f"[cookies] 已添加 --cookies 参数")
-                logger.info(f"[COOKIES] 已添加到命令: --cookies {cookies_path}")
-            else:
-                task.log.append(f"[cookies] 警告: cookies.txt 不存在")
-                logger.warning(f"[COOKIES] 文件不存在: {cookies_path}")
+                task.log.append(f"[cookies] 已自动带入本地 cookies: {cookies_path}")
         else:
             if not selected_cookie_file and _should_try_browser_cookies(effective_url, manager.cookies_file):
                 browser = _choose_browser_cookie_source(task)
                 a += ['--cookies-from-browser', browser]
                 if selected_cookie_file and not _cookiefile_has_site_cookie(selected_cookie_file, effective_url):
-                    task.log.append(f'[cookies] cookies.txt 不含 MissAV 站点 cookie，改用浏览器 cookies ({browser})')
+                    task.log.append(f'[cookies] cookies.txt 不含目标站点 cookie，改用浏览器 cookies ({browser})')
                 else:
                     task.log.append(f'[cookies] 已添加 --cookies-from-browser {browser}')
             elif selected_cookie_file:
@@ -1326,6 +1404,9 @@ def _execute_media_download(manager: Any, task: Task, base_template: str):
             '--extractor-args', YOUTUBE_RICH_EXTRACTOR_ARGS
         ]
         a = _with_plugin_dir_args(a)
+        js_args = _get_js_runtime_args()
+        if js_args:
+            a += js_args
         if explicit_format:
             a += ['-f', explicit_format]
 
@@ -1334,7 +1415,7 @@ def _execute_media_download(manager: Any, task: Task, base_template: str):
             proxy_url = os.environ.get('LUMINA_PROXY') or os.environ.get('UMD_PROXY') or getattr(config, 'PROXY_URL', '')
         except ImportError:
             proxy_url = os.environ.get('LUMINA_PROXY') or os.environ.get('UMD_PROXY', '')
-        if proxy_url and not force_no_proxy:
+        if proxy_url and not force_no_proxy and _is_proxy_alive(proxy_url):
             a += ['--proxy', proxy_url]
 
         if task.geo_bypass:
@@ -1344,6 +1425,8 @@ def _execute_media_download(manager: Any, task: Task, base_template: str):
             a += ['--cookies-from-browser', _choose_browser_cookie_source(task)]
         elif selected_cookie_file:
             a += ['--cookies', selected_cookie_file]
+        elif os.path.exists(str(manager.cookies_file)):
+            a += ['--cookies', str(manager.cookies_file)]
 
         ffmpeg_path = manager.ffmpeg_locator()
         if ffmpeg_path:
@@ -1677,6 +1760,14 @@ def _is_youtube_signin_error(lines: list[str]) -> bool:
         'use --cookies-from-browser or --cookies for the authentication',
         'youtube requires account age-verification',
         'this video is age-restricted',
+        '403: forbidden',
+        'http error 403',
+        'error 403:',
+        '403 forbidden',
+        'forbidden',
+        'po token',
+        'potoken',
+        'giving up after 3 retries',
     )
     return any(m in t for m in markers)
 
