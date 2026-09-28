@@ -123,11 +123,23 @@ _hidden = [
     'tasks',
     'errors',
     'flask_cors',  # 有时被遗漏
+    'service',
+    'service.tasks',
+    'service.tasks.downloader',
+    'service.tasks.manager',
+    'service.tasks.models',
+    'service.utils',
+    'service.utils.dependencies',
+    'service.utils.common',
+    'service.utils.errors',
     'service.utils.douyin',
     'service.utils.douyin.sm3',
     'service.utils.douyin.abogus',
     'service.utils.douyin.websign',
     'service.utils.douyin.extractor',
+    'service.web',
+    'service.web.routes_api',
+    'service.web.routes_ui',
 ]
 
 # runtime_fix_path.py 可选：若不存在则移除
