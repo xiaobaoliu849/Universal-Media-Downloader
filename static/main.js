@@ -953,6 +953,10 @@ function downloadMedia() {
         if (data.task_id && !currentTaskId) {
             currentTaskId = data.task_id;
             addLog(`任务ID: ${currentTaskId}`);
+            // 任务已进入后台队列：按钮立即恢复，可以继续添加下一个
+            window.setDownloadBtnState('idle');
+            window.showToast('已加入下载队列', 'info');
+            if (window.refreshQueue) window.refreshQueue();
         }
         if (data.type === 'log') {
             addLog(data.line);
@@ -1003,7 +1007,6 @@ function downloadMedia() {
                 updateStageStatus('finished');
                 if (remainingTime) remainingTime.textContent = '00:00';
                 window.setDownloadBtnState('idle');
-                window.showToast('下载完成，文件已保存', 'success');
                 closeCurrentEventSource();
             } else if (data.status === 'error') {
                 addLog('任务失败', 'error');
