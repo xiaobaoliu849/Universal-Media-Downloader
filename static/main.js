@@ -940,6 +940,7 @@ function downloadMedia() {
 
     const sseUrl = `/api/stream_task?${params.toString()}`;
     downloadStartTime = Date.now();
+    currentTaskId = null;
     currentEventSource = new EventSource(sseUrl);
 
     currentEventSource.onmessage = (ev) => {
