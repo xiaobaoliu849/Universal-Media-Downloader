@@ -5,235 +5,190 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" type="image/x-icon" href="/static/icon.ico">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
     <link rel="alternate icon" type="image/svg+xml" href="/static/video_downloader_logo.svg">
     <link rel="stylesheet" href="/static/style.css?v={{ static_version }}">
 </head>
 <body>
-    <!-- 顶部导航栏 -->
-    <header class="header">
-        <div class="header-content">
-            <div class="brand-group">
-                <img src="/static/video_downloader_logo.svg" class="logo" alt="Universal Media Downloader Logo">
-                <div class="title-block">
-                    <div class="title-row">
-                        <h1>Universal Media Downloader</h1>
-                        <span class="build-badge">v{{ ui_version }}</span>
-                    </div>
-                </div>
+    <header class="topbar">
+        <div class="topbar-inner">
+            <div class="brand">
+                <img src="/static/video_downloader_logo.svg" class="brand-logo" alt="" width="22" height="22">
+                <span class="brand-name">Universal Media Downloader</span>
+                <span class="brand-version">{{ ui_version }}</span>
             </div>
-            <div class="header-actions">
-                <div id="ytdlpBadge" class="ytdlp-badge">
-                    <span class="engine-indicator"></span>
-                    <span id="ytdlpVerText">内核加载中...</span>
-                    <button id="ytdlpUpdateBtn" class="clear-btn ytdlp-update-btn" title="更新 yt-dlp 核心引擎到最新版">🔄 <span class="update-label">升级内核</span></button>
+            <div class="topbar-actions">
+                <div id="ytdlpBadge" class="engine">
+                    <span class="engine-dot" aria-hidden="true"></span>
+                    <span id="ytdlpVerText">读取内核版本…</span>
+                    <button id="ytdlpUpdateBtn" class="link-btn ytdlp-update-btn" title="把 yt-dlp 更新到最新版本">更新</button>
                 </div>
-                <button id="themeToggleBtn" class="theme-toggle-btn" aria-label="切换主题" title="切换深色/浅色主题">🌙</button>
+                <button id="themeToggleBtn" class="icon-btn theme-toggle-btn" aria-label="切换主题" title="切换深色 / 浅色"></button>
             </div>
         </div>
     </header>
 
-    <div class="container">
-
-        <!-- 主要工作面板 -->
-        <main class="input-container">
-            <!-- 链接输入行 -->
+    <main class="page input-container">
+        <!-- 链接 -->
+        <section class="link-block">
+            <label for="videoUrl" class="link-label">视频链接</label>
             <div class="input-row">
                 <div class="input-field-wrapper">
-                    <span class="input-icon">🔗</span>
-                    <input type="text" id="videoUrl" placeholder="粘贴视频或播放列表链接 (YouTube, Bilibili, Douyin, X, TikTok, MissAV 等)..." required autocomplete="off" spellcheck="false">
-                    <button type="button" id="clearUrlBtn" class="input-action-btn clear-input-btn" title="清空链接" aria-label="清空" style="display: none;">✕</button>
+                    <input type="text" id="videoUrl" class="url-input" placeholder="粘贴 YouTube、Bilibili、抖音、X 等网站的链接" required autocomplete="off" spellcheck="false">
+                    <button type="button" id="clearUrlBtn" class="clear-input-btn" title="清空链接" aria-label="清空链接" style="display: none;">
+                        <svg width="12" height="12" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7"/></svg>
+                    </button>
                 </div>
-                <button type="button" id="pasteUrlBtn" class="paste-btn" title="从剪贴板读取链接并自动解析">
-                    <span class="btn-icon">📋</span>
-                    <span>粘贴</span>
-                </button>
+                <button type="button" id="pasteUrlBtn" class="btn btn-secondary paste-btn" title="读取剪贴板中的链接并解析">粘贴</button>
             </div>
+            <div id="error-message" class="error-banner" role="alert"></div>
+        </section>
 
-            <div id="error-message" class="error-banner"></div>
-
-            <!-- 视频预览卡片 -->
-            <div class="video-info" id="videoInfo">
-                <div class="video-preview-card">
-                    <div class="thumbnail-wrapper" id="thumbnailWrapper">
-                        <img id="videoThumb" class="video-thumbnail" alt="视频封面预览">
-                        <div id="thumbFallback" class="thumb-fallback">🎬</div>
-                        <span id="durationBadge" class="duration-badge">--:--</span>
+        <!-- 视频预览 -->
+        <section class="video-info" id="videoInfo">
+            <div class="video-preview-card">
+                <div class="thumbnail-wrapper" id="thumbnailWrapper">
+                    <img id="videoThumb" class="video-thumbnail" alt="">
+                    <div id="thumbFallback" class="thumb-fallback">
+                        <svg width="22" height="22" viewBox="0 0 22 22" fill="currentColor" aria-hidden="true"><path d="M7 4.5v13l11-6.5z"/></svg>
                     </div>
-                    <div class="video-meta-block">
-                        <h3 id="videoTitle" class="video-title">正在解析媒体信息...</h3>
-                        <div class="meta-chips-row">
-                            <span class="meta-chip uploader-chip">
-                                <span class="chip-icon">👤</span>
-                                <span id="videoUploader">未知作者</span>
-                            </span>
-                            <span class="meta-chip extractor-chip">
-                                <span class="chip-icon">🌐</span>
-                                <span id="videoExtractor">通用解析</span>
-                            </span>
-                            <span class="meta-chip quality-chip">
-                                <span class="chip-icon">📺</span>
-                                <span id="videoMaxRes">最高质量 --</span>
-                            </span>
+                    <span id="durationBadge" class="duration-badge">--:--</span>
+                </div>
+                <div class="video-meta-block">
+                    <h2 id="videoTitle" class="video-title">正在读取视频信息…</h2>
+                    <p class="video-meta">
+                        <span id="videoUploader">未知作者</span>
+                        <span id="videoExtractor">通用</span>
+                        <span id="videoMaxRes"></span>
+                    </p>
+                    <p id="videoExtraNote" class="video-extra-note"></p>
+                </div>
+            </div>
+        </section>
+
+        <!-- 下载选项 -->
+        <section class="form">
+            <div class="field-row">
+                <span class="field-label">内容</span>
+                <div class="field-control">
+                    <div class="segmented download-mode-group" role="radiogroup" aria-label="下载内容">
+                        <div class="radio-option">
+                            <input type="radio" id="merged" name="downloadMode" value="merged" checked>
+                            <label for="merged">视频 + 音频</label>
                         </div>
-                        <div id="videoExtraNote" class="video-extra-note"></div>
+                        <div class="radio-option">
+                            <input type="radio" id="video" name="downloadMode" value="video">
+                            <label for="video">仅视频</label>
+                        </div>
+                        <div class="radio-option">
+                            <input type="radio" id="audio" name="downloadMode" value="audio">
+                            <label for="audio">仅音频</label>
+                        </div>
+                        <div class="radio-option">
+                            <input type="radio" id="thumbnail" name="downloadMode" value="thumbnail">
+                            <label for="thumbnail">仅封面</label>
+                        </div>
                     </div>
                 </div>
             </div>
 
-            <!-- 下载模式 -->
-            <div class="section-block">
-                <div class="section-label">下载内容</div>
-                <div class="radio-group download-mode-group">
-                    <div class="radio-option">
-                        <input type="radio" id="merged" name="downloadMode" value="merged" checked>
-                        <label for="merged">📹 音视频合并</label>
-                    </div>
-                    <div class="radio-option">
-                        <input type="radio" id="video" name="downloadMode" value="video">
-                        <label for="video">🎬 仅视频</label>
-                    </div>
-                    <div class="radio-option">
-                        <input type="radio" id="audio" name="downloadMode" value="audio">
-                        <label for="audio">🎵 仅音频</label>
-                    </div>
-                    <div class="radio-option">
-                        <input type="radio" id="thumbnail" name="downloadMode" value="thumbnail">
-                        <label for="thumbnail">🖼️ 仅封面</label>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 质量选择区域 -->
-            <div class="options-row quality-section" id="qualitySection">
-                <div class="option-group">
-                    <label for="quality">清晰度规格</label>
-                    <div class="radio-group" id="qualityOptionsContainer">
+            <div class="field-row quality-section" id="qualitySection">
+                <span class="field-label">清晰度</span>
+                <div class="field-control">
+                    <div class="radio-group chips" id="qualityOptionsContainer" role="radiogroup" aria-label="清晰度">
                         <div class="radio-option">
                             <input type="radio" id="best" name="quality" value="best" checked>
-                            <label for="best">🧠 自动推荐 (最佳质量)</label>
+                            <label for="best">自动</label>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <!-- 字幕选择区域 -->
-            <div class="subtitle-section" id="subtitleSection">
-                <div class="options-row">
-                    <div class="option-group">
-                        <label for="subtitles" id="subtitlesLabel">字幕轨道</label>
-                        <div class="subtitle-row">
-                            <select id="subtitles">
-                                <option value="">无字幕</option>
-                            </select>
-                            <button class="subtitle-btn" onclick="downloadSubtitles()">⬇️ 下载字幕</button>
-                        </div>
-                    </div>
+            <div class="field-row subtitle-section" id="subtitleSection">
+                <label for="subtitles" id="subtitlesLabel" class="field-label">字幕</label>
+                <div class="field-control subtitle-row">
+                    <select id="subtitles">
+                        <option value="">无字幕</option>
+                    </select>
+                    <button class="link-btn subtitle-btn" onclick="downloadSubtitles()">下载字幕</button>
                 </div>
             </div>
 
-            <!-- 主下载按钮 -->
-            <div class="download-group">
-                <button class="download-btn" id="mainDownloadBtn" onclick="downloadMedia()">
-                    <span class="btn-icon">📥</span>
-                    <span class="btn-label">下载媒体</span>
-                </button>
-                <span class="download-hint">按 Enter 可直接解析 / 开始下载</span>
-            </div>
-
-            <!-- 下载偏好：保存目录 + 开关 -->
-            <div class="prefs-block">
-                <!-- 保存路径配置区域 -->
-                <div class="dir-setting-card">
-                    <div class="dir-setting-header">
-                        <span class="dir-label">💾 保存目录</span>
-                        <span id="diskFreeSpace" class="dir-disk-space">剩余空间: 统计中...</span>
-                    </div>
-                    <div class="dir-setting-body">
-                        <div class="dir-input-wrapper">
-                            <input type="text" id="downloadDirInput" class="dir-input" placeholder="加载下载目录中..." spellcheck="false" title="可直接编辑或粘贴目录路径，按回车保存">
-                        </div>
-                        <div class="dir-actions">
-                            <button type="button" class="dir-action-btn primary" id="chooseDirBtn" onclick="chooseDownloadDir()" title="打开系统选择器挑选目录">📁 更改目录</button>
-                            <button type="button" class="dir-action-btn" id="openDirBtn" onclick="openDownloadDir()" title="在资源管理器中打开此目录">📂 打开</button>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- 配置开关面板 -->
-                <div class="settings-group">
-                    <label>
-                        <input type="checkbox" id="fastStartToggle" checked>
-                        <span>⚡ 快速启动 (跳过二次探测)</span>
-                    </label>
-                    <label>
-                        <input type="checkbox" id="thumbnailToggle">
-                        <span>🖼️ 保存高清封面</span>
-                    </label>
-                    <label>
-                        <input type="checkbox" id="metaToggle">
-                        <span>📝 生成元数据 (meta.json)</span>
-                    </label>
-                    <span id="fastStartHint" class="fast-start-hint">(解析后自动加速)</span>
-                </div>
-
-            </div>
-
-            <!-- 下载进度区域 -->
-            <div class="progress-section">
-                <div id="progress" class="progress-card">
-                    <div class="progress-header">
-                        <div class="progress-title-wrap">
-                            <span class="progress-title" id="progressTitle">下载任务</span>
-                            <span class="stage-tag" id="statusText">等待中</span>
-                        </div>
-                        <button class="cancel-btn" id="cancelBtn" onclick="cancelDownload()">✕ 取消</button>
-                    </div>
-                    <div class="progress-url" id="progressUrl"></div>
-                    <div class="progress-bar">
-                        <div class="progress-fill"></div>
-                    </div>
-                    <div class="progress-stats-grid">
-                        <div class="stat-pill speed-pill">
-                            <span class="stat-label">实时速度</span>
-                            <span class="stat-value" id="downloadSpeed">--</span>
-                        </div>
-                        <div class="stat-pill eta-pill">
-                            <span class="stat-label">剩余时间</span>
-                            <span class="stat-value" id="remainingTime">--:--</span>
-                        </div>
-                        <div class="stat-pill percent-pill">
-                            <span class="stat-label">完成进度</span>
-                            <span class="stat-value" id="progressPercent">0.0%</span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- 日志区域 -->
-                <div class="log-section">
-                    <div class="log-header">
-                        <div class="log-title-wrap">
-                            <h4 class="log-title">任务日志</h4>
-                            <span id="logStats" class="log-stats-badge">等待下载...</span>
-                        </div>
-                        <div class="log-actions">
-                            <button class="clear-btn" id="toggleLogBtn" onclick="toggleLogVisibility()">显示日志</button>
-                            <button class="clear-btn" onclick="clearLogs()">🗑️ 清理日志</button>
-                            <button class="clear-btn" onclick="openDownloadDir()">📂 打开目录</button>
-                            <button class="clear-btn" id="revealLastBtn" onclick="revealLastFile()">🔍 最近文件</button>
-                        </div>
-                    </div>
-                    <div id="logContainer" class="log-container" style="display: none;"></div>
+            <div class="field-row">
+                <label for="downloadDirInput" class="field-label">保存到</label>
+                <div class="field-control dir-row">
+                    <input type="text" id="downloadDirInput" class="dir-input" placeholder="读取保存位置…" spellcheck="false" title="可直接输入路径，按回车保存">
+                    <button type="button" class="link-btn" id="chooseDirBtn" onclick="chooseDownloadDir()" title="选择文件夹">更改</button>
+                    <button type="button" class="link-btn" id="openDirBtn" onclick="openDownloadDir()" title="在资源管理器中打开">打开</button>
+                    <span id="diskFreeSpace" class="dir-disk-space"></span>
                 </div>
             </div>
-        </main>
 
-        <footer class="app-footer">
-            <span>支持 1000+ 视频与音频站点 · 由 yt-dlp 驱动</span>
-        </footer>
-    </div>
+            <div class="field-row">
+                <span class="field-label" aria-hidden="true"></span>
+                <div class="field-control">
+                    <details class="more-options">
+                        <summary>更多选项</summary>
+                        <div class="settings-group">
+                            <label class="switch">
+                                <input type="checkbox" id="fastStartToggle" checked>
+                                <span>快速开始<small id="fastStartHint" class="fast-start-hint">跳过第二次检测，解析后直接下载</small></span>
+                            </label>
+                            <label class="switch">
+                                <input type="checkbox" id="thumbnailToggle">
+                                <span>同时保存封面图</span>
+                            </label>
+                            <label class="switch">
+                                <input type="checkbox" id="metaToggle">
+                                <span>生成元数据文件<small>meta.json</small></span>
+                            </label>
+                        </div>
+                    </details>
+                </div>
+            </div>
+
+            <div class="field-row action-row">
+                <span class="field-label" aria-hidden="true"></span>
+                <div class="field-control">
+                    <button class="btn btn-primary download-btn" id="mainDownloadBtn" onclick="downloadMedia()">
+                        <span class="btn-label">下载</span>
+                    </button>
+                    <span class="download-hint">在链接框按回车也可以开始</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- 进度 -->
+        <section class="progress-section">
+            <div id="progress" class="progress-card" aria-live="polite">
+                <div class="progress-header">
+                    <span class="progress-title" id="progressTitle">下载任务</span>
+                    <span class="stage-tag" id="statusText">等待中</span>
+                    <button class="link-btn cancel-btn" id="cancelBtn" onclick="cancelDownload()">取消</button>
+                </div>
+                <div class="progress-bar"><div class="progress-fill"></div></div>
+                <div class="progress-stats">
+                    <span class="stat"><span class="stat-value" id="progressPercent">0.0%</span></span>
+                    <span class="stat"><span class="stat-label">速度</span><span class="stat-value" id="downloadSpeed">--</span></span>
+                    <span class="stat"><span class="stat-label">剩余</span><span class="stat-value" id="remainingTime">--:--</span></span>
+                </div>
+                <div class="progress-url" id="progressUrl"></div>
+            </div>
+
+            <!-- 日志 -->
+            <div class="log-section">
+                <div class="log-header">
+                    <h3 class="log-title">日志</h3>
+                    <span id="logStats" class="log-stats">暂无记录</span>
+                    <div class="log-actions">
+                        <button class="link-btn" id="toggleLogBtn" onclick="toggleLogVisibility()">显示日志</button>
+                        <button class="link-btn" onclick="clearLogs()">清空</button>
+                        <button class="link-btn" id="revealLastBtn" onclick="revealLastFile()">打开最近下载的文件</button>
+                    </div>
+                </div>
+                <div id="logContainer" class="log-container" style="display: none;"></div>
+            </div>
+        </section>
+    </main>
 
     <script src="/static/main.js?v={{ static_version }}"></script>
 </body>

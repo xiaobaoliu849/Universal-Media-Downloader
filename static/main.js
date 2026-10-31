@@ -6,6 +6,10 @@ const MAX_LOG_LINES = 500;
 let isFetchingInfo = false;  // 防止重复请求
 let lastFetchedUrl = '';     // 记录上次请求的URL
 
+// 主题按钮的线条图标 (跟随 currentColor)
+const SUN_ICON = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="3"/><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1"/></svg>';
+const MOON_ICON = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><path d="M13.5 9.6A5.5 5.5 0 0 1 6.4 2.5a5.5 5.5 0 1 0 7.1 7.1Z"/></svg>';
+
 // --- Theme Toggle & Clean UI Helper Controllers ---
 (function() {
     // 1. 初始化与切换主题
@@ -15,7 +19,8 @@ let lastFetchedUrl = '';     // 记录上次请求的URL
     function updateThemeBtn(theme) {
         const btn = document.getElementById('themeToggleBtn');
         if (btn) {
-            btn.innerHTML = theme === 'dark' ? '☀️' : '🌙';
+            btn.innerHTML = theme === 'dark' ? SUN_ICON : MOON_ICON;
+            btn.setAttribute('aria-label', theme === 'dark' ? '切换到浅色' : '切换到深色');
         }
     }
 
@@ -41,7 +46,7 @@ let lastFetchedUrl = '';     // 记录上次请求的URL
         if (!updateBtn || updateBtn.disabled) return;
         updateBtn.disabled = true;
         const oldText = updateBtn.textContent;
-        updateBtn.textContent = '⏳ 更新中...';
+        updateBtn.textContent = '更新中…';
         window.showToast('正在检查并更新 yt-dlp 内核，请稍候...', 'info');
 
         try {
@@ -178,11 +183,9 @@ let lastFetchedUrl = '';     // 记录上次请求的URL
         }
         const toast = document.createElement('div');
         toast.className = `toast toast-${type}`;
-        const icons = { success: '✅', error: '❌', warning: '⚠️', info: 'ℹ️' };
-        toast.innerHTML = `
-            <span class="toast-icon">${icons[type] || ''}</span>
+                toast.innerHTML = `
             <span class="toast-message">${message}</span>
-            <button class="toast-close-btn">&times;</button>
+            <button class="toast-close-btn" aria-label="关闭">&times;</button>
         `;
         container.appendChild(toast);
         toast.querySelector('.toast-close-btn').addEventListener('click', () => {
@@ -245,7 +248,7 @@ let lastFetchedUrl = '';     // 记录上次请求的URL
         } else {
             btn.disabled = false;
             btn.classList.remove('pulse-glow');
-            label.textContent = text || '下载媒体';
+            label.textContent = text || '下载';
         }
     };
 })();
@@ -404,7 +407,7 @@ function displayVideoInfo(data) {
     if (uploader) uploader.textContent = data.uploader || data.channel || data.creator || '未知作者';
     if (extractor) extractor.textContent = data.extractor_key || data.extractor || '通用媒体';
     if (maxRes) {
-        maxRes.textContent = data.max_height ? `最高清晰度: ${data.max_height}p` : '最佳质量';
+        maxRes.textContent = data.max_height ? `最高 ${data.max_height}p` : '';
     }
     if (durationBadge) {
         durationBadge.textContent = formatDuration(data.duration);
@@ -427,7 +430,7 @@ function displayVideoInfo(data) {
 
     if (extraNote) {
         if (data.quality_warning) {
-            extraNote.textContent = 'ℹ️ ' + data.quality_warning;
+            extraNote.textContent = data.quality_warning;
             extraNote.style.display = 'block';
         } else {
             extraNote.textContent = '';
@@ -476,7 +479,7 @@ function updateQualityOptions(formats, qualityPairs) {
     bestOption.className = 'radio-option';
     bestOption.innerHTML = `
                 <input type="radio" id="best" name="quality" value="best" checked>
-                <label for="best">🧠 自动推荐</label>
+                <label for="best">自动</label>
             `;
     qualityContainer.appendChild(bestOption);
 
@@ -663,7 +666,7 @@ function clearLogs() {
     const remainingTime = document.getElementById('remainingTime');
 
     // 重置为初始状态
-    statusText.textContent = '等待下载...';
+    statusText.textContent = '等待中';
     progressPercent.textContent = '0.0%';
     remainingTime.textContent = '--:--';
 
@@ -676,13 +679,13 @@ function clearLogs() {
     progressBar.style.width = '0%';
 
     // 重置下载按钮状态
-    window.setDownloadBtnState('idle', '📥 下载媒体');
+    window.setDownloadBtnState('idle');
 
     // 清理字幕按钮状态
     const subtitleButton = document.querySelector('.subtitle-btn');
     if (subtitleButton) {
         subtitleButton.disabled = false;
-        subtitleButton.innerHTML = '⬇️ 下载字幕';
+        subtitleButton.textContent = '下载字幕';
     }
 
     // 清理视频信息与输入
@@ -700,7 +703,7 @@ function clearLogs() {
     // 清理日志统计
     const logStats = document.getElementById('logStats');
     if (logStats) {
-        logStats.textContent = '等待下载...';
+        logStats.textContent = '暂无记录';
     }
 
     // 关闭可能存在的下载连接
@@ -736,7 +739,7 @@ function updateSubtitleOptions(subtitles, autoSubtitles) {
 
     if (hasSubtitles) {
         // 有可用字幕，高亮标签并更新默认文本
-        subtitlesLabel.style.color = '#1d9bf0';
+        subtitlesLabel.style.color = 'var(--accent)';
         subtitleSelect.innerHTML = '<option value="">有可用字幕</option>';
     } else {
         // 没有字幕
@@ -768,7 +771,7 @@ function showVideoSections() {
     const videoInfo = document.getElementById('videoInfo');
     const qualitySection = document.getElementById('qualitySection');
     if (videoInfo) window.showElement(videoInfo);
-    if (qualitySection) qualitySection.style.display = 'flex';
+    if (qualitySection) qualitySection.style.display = '';
     window.hideErrorMessage();
 }
 
@@ -782,7 +785,7 @@ function hideVideoSections() {
         qualityContainer.innerHTML = `
             <div class="radio-option">
                 <input type="radio" id="best" name="quality" value="best" checked>
-                <label for="best">🧠 自动推荐 (最佳质量)</label>
+                <label for="best">自动</label>
             </div>
         `;
     }
@@ -894,7 +897,7 @@ function downloadMedia() {
     closeCurrentEventSource();
     resetProgressUI();
     if (progressContainer) window.showElement(progressContainer);
-    window.setDownloadBtnState('loading', '⏳ 正在初始化...');
+    window.setDownloadBtnState('loading', '准备中…');
     if (progressTitle) progressTitle.textContent = currentVideoInfo?.title ? '下载中: ' + currentVideoInfo.title : '下载任务';
     if (progressUrl) progressUrl.textContent = videoUrl;
     addLog(`创建任务: mode=${mode} quality=${quality}`);
@@ -1007,7 +1010,7 @@ function downloadMedia() {
                 updateStageStatus('finished');
                 if (remainingTime) remainingTime.textContent = '00:00';
                 window.setDownloadBtnState('idle');
-                window.showToast('🎉 下载完成！文件已保存', 'success');
+                window.showToast('下载完成，文件已保存', 'success');
                 closeCurrentEventSource();
             } else if (data.status === 'error') {
                 addLog('任务失败', 'error');
@@ -1072,7 +1075,7 @@ function downloadSubtitles() {
     if (progressContainer) window.showElement(progressContainer);
     if (btn) {
         btn.disabled = true;
-        btn.textContent = '⏳ 字幕任务中...';
+        btn.textContent = '下载字幕中…';
     }
     const params = new URLSearchParams();
     params.set('url', videoUrl);
@@ -1095,7 +1098,7 @@ function downloadSubtitles() {
             window.showErrorMessage('字幕任务出错: ' + data.error);
             if (btn) {
                 btn.disabled = false;
-                btn.textContent = '⬇️ 下载字幕';
+                btn.textContent = '下载字幕';
             }
             closeCurrentEventSource();
             return;
@@ -1112,7 +1115,7 @@ function downloadSubtitles() {
                 if (pct >= 100) {
                     if (btn) {
                         btn.disabled = false;
-                        btn.textContent = '⬇️ 下载字幕';
+                        btn.textContent = '下载字幕';
                     }
                     window.showToast('字幕下载完成！', 'success');
                     closeCurrentEventSource();
@@ -1121,7 +1124,7 @@ function downloadSubtitles() {
         } else if (data.event === 'end') {
             if (btn) {
                 btn.disabled = false;
-                btn.textContent = '⬇️ 下载字幕';
+                btn.textContent = '下载字幕';
             }
             closeCurrentEventSource();
         }
@@ -1132,7 +1135,7 @@ function downloadSubtitles() {
         window.showErrorMessage('与服务器的连接中断，请检查后端服务是否仍在运行。');
         if (btn) {
             btn.disabled = false;
-            btn.textContent = '⬇️ 下载字幕';
+            btn.textContent = '下载字幕';
         }
         closeCurrentEventSource();
     };
@@ -1189,10 +1192,10 @@ function updateDiskSpaceUI(freeGb) {
     const space = document.getElementById('diskFreeSpace');
     if (!space) return;
     if (typeof freeGb === 'number') {
-        space.textContent = `剩余空间: ${freeGb} GB 可用`;
+        space.textContent = `可用 ${freeGb} GB`;
         space.className = 'dir-disk-space ' + (freeGb > 20 ? 'space-safe' : (freeGb > 5 ? 'space-warning' : 'space-danger'));
     } else {
-        space.textContent = '剩余空间: 就绪';
+        space.textContent = '';
         space.className = 'dir-disk-space space-safe';
     }
 }
@@ -1217,7 +1220,7 @@ async function chooseDownloadDir() {
     const input = document.getElementById('downloadDirInput');
     if (btn) {
         btn.disabled = true;
-        btn.textContent = '⏳ 选择中...';
+        btn.textContent = '选择中…';
     }
     try {
         const resp = await fetch('/api/choose_download_dir', { method: 'POST' });
@@ -1235,7 +1238,7 @@ async function chooseDownloadDir() {
     } finally {
         if (btn) {
             btn.disabled = false;
-            btn.textContent = '📁 更改目录';
+            btn.textContent = '更改';
         }
     }
 }
