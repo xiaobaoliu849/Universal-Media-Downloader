@@ -408,6 +408,7 @@ function displayVideoInfo(data) {
     }
     if (durationBadge) {
         durationBadge.textContent = formatDuration(data.duration);
+        durationBadge.style.display = data.duration ? '' : 'none';
     }
 
     if (thumbImg && thumbFallback) {
@@ -565,16 +566,7 @@ function updateQualityOptions(formats, qualityPairs) {
             qualityContainer.appendChild(option);
         });
 
-        // 如果没有找到任何质量选项，添加提示
-        if (heights.size === 0) {
-            const noQualityOption = document.createElement('div');
-            noQualityOption.className = 'radio-option';
-            noQualityOption.innerHTML = `
-                        <input type="radio" id="no_quality" name="quality" value="best" checked disabled>
-                        <label for="no_quality">无可用质量选项 (使用最佳)</label>
-                    `;
-            qualityContainer.appendChild(noQualityOption);
-        }
+        // 没有可选清晰度时只保留“自动”
     }
 
     // 恢复之前的选择
