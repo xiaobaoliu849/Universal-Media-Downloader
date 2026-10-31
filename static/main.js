@@ -451,6 +451,16 @@ function formatDuration(seconds) {
     return `${minutes}:${secs.toString().padStart(2, '0')}`;
 }
 
+// 将像素高度转换为清晰度标签。每个高度对应唯一标签，
+// 避免 1440p / 800p 等非标准高度被归入 "1080P"/"720P" 导致出现重复选项。
+function qualityLabel(h) {
+    if (h === 4320) return '8K';
+    if (h === 2160) return '4K';
+    if (h === 1440) return '2K';
+    if (h < 360) return `${h}P (低清)`;
+    return `${h}P`;
+}
+
 function updateQualityOptions(formats, qualityPairs) {
     const qualityContainer = document.querySelector('#qualitySection .radio-group');
     const downloadMode = document.querySelector('input[name="downloadMode"]:checked').value;
@@ -480,14 +490,7 @@ function updateQualityOptions(formats, qualityPairs) {
                 if (!pair || !pair.video || !pair.audio) return;
                 const option = document.createElement('div');
                 option.className = 'radio-option';
-                let labelTxt = `${h}p`;
-                if (h >= 4320) labelTxt = '8K';
-                else if (h >= 2160) labelTxt = '4K';
-                else if (h >= 1080) labelTxt = '1080P';
-                else if (h >= 720) labelTxt = '720P';
-                else if (h >= 480) labelTxt = '480P';
-                else if (h >= 360) labelTxt = '360P';
-                else labelTxt = `${h}p (低清)`;
+                const labelTxt = qualityLabel(h);
                 option.innerHTML = `
                             <input type="radio" id="q${h}" name="quality" value="${h}" data-vfmt="${pair.video}" data-afmt="${pair.audio}">
                             <label for="q${h}">${labelTxt}</label>
@@ -553,14 +556,7 @@ function updateQualityOptions(formats, qualityPairs) {
         Array.from(heights.keys()).sort((a, b) => b - a).forEach(height => {
             const option = document.createElement('div');
             option.className = 'radio-option';
-            let label = `${height}p`;
-            if (height >= 4320) label = '8K';
-            else if (height >= 2160) label = '4K';
-            else if (height >= 1080) label = '1080P';
-            else if (height >= 720) label = '720P';
-            else if (height >= 480) label = '480P';
-            else if (height >= 360) label = '360P';
-            else label = `${height}p (低清)`;  // 对于240p等低质量
+            const label = qualityLabel(height);
 
             option.innerHTML = `
                         <input type="radio" id="q${height}" name="quality" value="${height}">
