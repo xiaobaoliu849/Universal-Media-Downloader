@@ -903,7 +903,7 @@ function downloadMedia() {
     params.set('url', videoUrl);
     params.set('mode', mode);
     params.set('quality', quality);
-    if (subtitles) params.set('subtitles', subtitles);
+    if (subtitles) params.set('sub_langs', subtitles);
     const metaToggle = document.getElementById('metaToggle');
     if (metaToggle) {
         params.set('meta', metaToggle.checked ? '1' : '0');
@@ -929,7 +929,7 @@ function downloadMedia() {
     }
     const thumbnailToggle = document.getElementById('thumbnailToggle');
     if (thumbnailToggle && thumbnailToggle.checked) {
-        params.set('thumbnail', '1');
+        params.set('write_thumbnail', '1');
         addLog('启用封面图下载');
     }
     if (vfmt && afmt && qualityRaw !== 'best') {
@@ -1077,8 +1077,8 @@ function downloadSubtitles() {
     const params = new URLSearchParams();
     params.set('url', videoUrl);
     params.set('mode', 'merged');
-    params.set('subtitles', subtitles);
-    params.set('subtitles_only', 'true');
+    params.set('sub_langs', subtitles);
+    params.set('subtitles_only', '1');
     params.set('quality', 'best');
 
     const sseUrl = `/api/stream_task?${params.toString()}`;
