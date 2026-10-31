@@ -10,66 +10,64 @@
 </head>
 <body>
     <header class="topbar">
-        <div class="topbar-inner">
-            <div class="brand">
-                <img src="/static/video_downloader_logo.svg" class="brand-logo" alt="" width="22" height="22">
-                <span class="brand-name">Universal Media Downloader</span>
-                <span class="brand-version">{{ ui_version }}</span>
+        <div class="brand">
+            <img src="/static/video_downloader_logo.svg" class="brand-logo" alt="" width="22" height="22">
+            <span class="brand-name">Universal Media Downloader</span>
+            <span class="brand-version">{{ ui_version }}</span>
+        </div>
+        <div class="topbar-actions">
+            <div id="ytdlpBadge" class="engine">
+                <span class="engine-dot" aria-hidden="true"></span>
+                <span id="ytdlpVerText">读取内核版本…</span>
+                <button id="ytdlpUpdateBtn" class="link-btn ytdlp-update-btn" title="把 yt-dlp 更新到最新版本">更新</button>
             </div>
-            <div class="topbar-actions">
-                <div id="ytdlpBadge" class="engine">
-                    <span class="engine-dot" aria-hidden="true"></span>
-                    <span id="ytdlpVerText">读取内核版本…</span>
-                    <button id="ytdlpUpdateBtn" class="link-btn ytdlp-update-btn" title="把 yt-dlp 更新到最新版本">更新</button>
-                </div>
-                <button id="themeToggleBtn" class="icon-btn theme-toggle-btn" aria-label="切换主题" title="切换深色 / 浅色"></button>
-            </div>
+            <button id="themeToggleBtn" class="icon-btn theme-toggle-btn" aria-label="切换主题" title="切换深色 / 浅色"></button>
         </div>
     </header>
 
-    <main class="page input-container">
-        <!-- 链接 -->
-        <section class="link-block">
-            <label for="videoUrl" class="link-label">视频链接</label>
+    <div class="workspace">
+        <!-- 左：新建下载 -->
+        <main class="panel compose input-container" aria-labelledby="composeTitle">
+            <h2 class="panel-title" id="composeTitle">新建下载</h2>
+
             <div class="input-row">
                 <div class="input-field-wrapper">
-                    <input type="text" id="videoUrl" class="url-input" placeholder="粘贴 YouTube、Bilibili、抖音、X 等网站的链接" required autocomplete="off" spellcheck="false">
+                    <label for="videoUrl" class="sr-only">视频链接</label>
+                    <input type="text" id="videoUrl" class="url-input" placeholder="粘贴视频链接" required autocomplete="off" spellcheck="false">
                     <button type="button" id="clearUrlBtn" class="clear-input-btn" title="清空链接" aria-label="清空链接" style="display: none;">
                         <svg width="12" height="12" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7"/></svg>
                     </button>
                 </div>
                 <button type="button" id="pasteUrlBtn" class="btn btn-secondary paste-btn" title="读取剪贴板中的链接并解析">粘贴</button>
             </div>
+            <p class="input-help">支持 YouTube、Bilibili、抖音、X、TikTok 等上千个网站</p>
+
             <div id="error-message" class="error-banner" role="alert"></div>
-        </section>
 
-        <!-- 视频预览 -->
-        <section class="video-info" id="videoInfo">
-            <div class="video-preview-card">
-                <div class="thumbnail-wrapper" id="thumbnailWrapper">
-                    <img id="videoThumb" class="video-thumbnail" alt="">
-                    <div id="thumbFallback" class="thumb-fallback">
-                        <svg width="22" height="22" viewBox="0 0 22 22" fill="currentColor" aria-hidden="true"><path d="M7 4.5v13l11-6.5z"/></svg>
+            <section class="video-info" id="videoInfo">
+                <div class="video-preview-card">
+                    <div class="thumbnail-wrapper" id="thumbnailWrapper">
+                        <img id="videoThumb" class="video-thumbnail" alt="">
+                        <div id="thumbFallback" class="thumb-fallback">
+                            <svg width="18" height="18" viewBox="0 0 22 22" fill="currentColor" aria-hidden="true"><path d="M7 4.5v13l11-6.5z"/></svg>
+                        </div>
+                        <span id="durationBadge" class="duration-badge">--:--</span>
                     </div>
-                    <span id="durationBadge" class="duration-badge">--:--</span>
+                    <div class="video-meta-block">
+                        <h3 id="videoTitle" class="video-title">正在读取视频信息…</h3>
+                        <p class="video-meta">
+                            <span id="videoUploader">未知作者</span>
+                            <span id="videoExtractor">通用</span>
+                            <span id="videoMaxRes"></span>
+                        </p>
+                        <p id="videoExtraNote" class="video-extra-note"></p>
+                    </div>
                 </div>
-                <div class="video-meta-block">
-                    <h2 id="videoTitle" class="video-title">正在读取视频信息…</h2>
-                    <p class="video-meta">
-                        <span id="videoUploader">未知作者</span>
-                        <span id="videoExtractor">通用</span>
-                        <span id="videoMaxRes"></span>
-                    </p>
-                    <p id="videoExtraNote" class="video-extra-note"></p>
-                </div>
-            </div>
-        </section>
+            </section>
 
-        <!-- 下载选项 -->
-        <section class="form">
-            <div class="field-row">
-                <span class="field-label">内容</span>
-                <div class="field-control">
+            <div class="form">
+                <div class="field">
+                    <span class="field-label">内容</span>
                     <div class="segmented download-mode-group" role="radiogroup" aria-label="下载内容">
                         <div class="radio-option">
                             <input type="radio" id="merged" name="downloadMode" value="merged" checked>
@@ -89,11 +87,9 @@
                         </div>
                     </div>
                 </div>
-            </div>
 
-            <div class="field-row quality-section" id="qualitySection">
-                <span class="field-label">清晰度</span>
-                <div class="field-control">
+                <div class="field quality-section" id="qualitySection">
+                    <span class="field-label">清晰度</span>
                     <div class="radio-group chips" id="qualityOptionsContainer" role="radiogroup" aria-label="清晰度">
                         <div class="radio-option">
                             <input type="radio" id="best" name="quality" value="best" checked>
@@ -101,80 +97,79 @@
                         </div>
                     </div>
                 </div>
-            </div>
 
-            <div class="field-row subtitle-section" id="subtitleSection">
-                <label for="subtitles" id="subtitlesLabel" class="field-label">字幕</label>
-                <div class="field-control subtitle-row">
-                    <select id="subtitles">
-                        <option value="">无字幕</option>
-                    </select>
-                    <button class="link-btn subtitle-btn" onclick="downloadSubtitles()">下载字幕</button>
+                <div class="field subtitle-section" id="subtitleSection">
+                    <label for="subtitles" id="subtitlesLabel" class="field-label">字幕</label>
+                    <div class="subtitle-row">
+                        <select id="subtitles">
+                            <option value="">无字幕</option>
+                        </select>
+                        <button class="link-btn subtitle-btn" onclick="downloadSubtitles()">只下载字幕</button>
+                    </div>
                 </div>
-            </div>
 
-            <div class="field-row">
-                <label for="downloadDirInput" class="field-label">保存到</label>
-                <div class="field-control dir-row">
-                    <input type="text" id="downloadDirInput" class="dir-input" placeholder="读取保存位置…" spellcheck="false" title="可直接输入路径，按回车保存">
-                    <button type="button" class="link-btn" id="chooseDirBtn" onclick="chooseDownloadDir()" title="选择文件夹">更改</button>
-                    <button type="button" class="link-btn" id="openDirBtn" onclick="openDownloadDir()" title="在资源管理器中打开">打开</button>
+                <div class="field">
+                    <label for="downloadDirInput" class="field-label">保存到</label>
+                    <div class="dir-row">
+                        <input type="text" id="downloadDirInput" class="dir-input" placeholder="读取保存位置…" spellcheck="false" title="可直接输入路径，按回车保存">
+                        <button type="button" class="link-btn" id="chooseDirBtn" onclick="chooseDownloadDir()" title="选择文件夹">更改</button>
+                    </div>
                     <span id="diskFreeSpace" class="dir-disk-space"></span>
                 </div>
+
+                <details class="more-options">
+                    <summary>更多选项</summary>
+                    <div class="settings-group">
+                        <label class="switch">
+                            <input type="checkbox" id="fastStartToggle" checked>
+                            <span>快速开始<small id="fastStartHint" class="fast-start-hint">跳过第二次检测，解析后直接下载</small></span>
+                        </label>
+                        <label class="switch">
+                            <input type="checkbox" id="thumbnailToggle">
+                            <span>同时保存封面图</span>
+                        </label>
+                        <label class="switch">
+                            <input type="checkbox" id="metaToggle">
+                            <span>生成元数据文件<small>meta.json</small></span>
+                        </label>
+                    </div>
+                </details>
             </div>
 
-            <div class="field-row">
-                <span class="field-label" aria-hidden="true"></span>
-                <div class="field-control">
-                    <details class="more-options">
-                        <summary>更多选项</summary>
-                        <div class="settings-group">
-                            <label class="switch">
-                                <input type="checkbox" id="fastStartToggle" checked>
-                                <span>快速开始<small id="fastStartHint" class="fast-start-hint">跳过第二次检测，解析后直接下载</small></span>
-                            </label>
-                            <label class="switch">
-                                <input type="checkbox" id="thumbnailToggle">
-                                <span>同时保存封面图</span>
-                            </label>
-                            <label class="switch">
-                                <input type="checkbox" id="metaToggle">
-                                <span>生成元数据文件<small>meta.json</small></span>
-                            </label>
-                        </div>
-                    </details>
-                </div>
+            <div class="compose-action">
+                <button class="btn btn-primary download-btn" id="mainDownloadBtn" onclick="downloadMedia()">
+                    <span class="btn-label">下载</span>
+                </button>
+                <span class="download-hint">在链接框按回车也可以开始</span>
             </div>
 
-            <div class="field-row action-row">
-                <span class="field-label" aria-hidden="true"></span>
-                <div class="field-control">
-                    <button class="btn btn-primary download-btn" id="mainDownloadBtn" onclick="downloadMedia()">
-                        <span class="btn-label">下载</span>
-                    </button>
-                    <span class="download-hint">在链接框按回车也可以开始</span>
-                </div>
-            </div>
-        </section>
-
-        <!-- 进度 -->
-        <section class="progress-section">
-            <div id="progress" class="progress-card" aria-live="polite">
-                <div class="progress-header">
-                    <span class="progress-title" id="progressTitle">下载任务</span>
-                    <span class="stage-tag" id="statusText">等待中</span>
-                    <button class="link-btn cancel-btn" id="cancelBtn" onclick="cancelDownload()">取消</button>
-                </div>
+            <!-- 旧的单任务进度卡：由队列取代，保留节点供脚本写入 -->
+            <div id="progress" class="legacy-progress" hidden>
+                <span id="progressTitle"></span><span id="statusText" class="stage-tag"></span>
+                <span id="progressUrl"></span>
                 <div class="progress-bar"><div class="progress-fill"></div></div>
-                <div class="progress-stats">
-                    <span class="stat"><span class="stat-value" id="progressPercent">0.0%</span></span>
-                    <span class="stat"><span class="stat-label">速度</span><span class="stat-value" id="downloadSpeed">--</span></span>
-                    <span class="stat"><span class="stat-label">剩余</span><span class="stat-value" id="remainingTime">--:--</span></span>
+                <span id="progressPercent"></span><span id="downloadSpeed"></span><span id="remainingTime"></span>
+                <button id="cancelBtn" onclick="cancelDownload()" tabindex="-1">取消</button>
+            </div>
+        </main>
+
+        <!-- 右：下载队列 -->
+        <section class="panel queue" aria-labelledby="queueTitle">
+            <div class="queue-head">
+                <h2 class="panel-title" id="queueTitle">下载队列</h2>
+                <span id="queueCount" class="queue-count"></span>
+                <div class="queue-tools">
+                    <button type="button" class="link-btn" id="queueClearBtn" disabled>清除已结束</button>
+                    <button type="button" class="link-btn" id="openDirBtn" onclick="openDownloadDir()">打开下载文件夹</button>
                 </div>
-                <div class="progress-url" id="progressUrl"></div>
             </div>
 
-            <!-- 日志 -->
+            <ul id="queueList" class="queue-list" aria-live="polite"></ul>
+            <div id="queueEmpty" class="queue-empty">
+                <p>还没有下载任务</p>
+                <p class="queue-empty-sub">在左边粘贴链接，点“下载”后会出现在这里。可以连续添加多个，最多同时下载两个。</p>
+            </div>
+
             <div class="log-section">
                 <div class="log-header">
                     <h3 class="log-title">日志</h3>
@@ -188,8 +183,9 @@
                 <div id="logContainer" class="log-container" style="display: none;"></div>
             </div>
         </section>
-    </main>
+    </div>
 
     <script src="/static/main.js?v={{ static_version }}"></script>
+    <script src="/static/queue.js?v={{ static_version }}"></script>
 </body>
 </html>

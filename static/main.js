@@ -411,6 +411,7 @@ function displayVideoInfo(data) {
     }
     if (durationBadge) {
         durationBadge.textContent = formatDuration(data.duration);
+        durationBadge.style.display = data.duration ? '' : 'none';
     }
 
     if (thumbImg && thumbFallback) {
@@ -568,16 +569,7 @@ function updateQualityOptions(formats, qualityPairs) {
             qualityContainer.appendChild(option);
         });
 
-        // 如果没有找到任何质量选项，添加提示
-        if (heights.size === 0) {
-            const noQualityOption = document.createElement('div');
-            noQualityOption.className = 'radio-option';
-            noQualityOption.innerHTML = `
-                        <input type="radio" id="no_quality" name="quality" value="best" checked disabled>
-                        <label for="no_quality">无可用质量选项 (使用最佳)</label>
-                    `;
-            qualityContainer.appendChild(noQualityOption);
-        }
+        // 没有可选清晰度时只保留“自动”
     }
 
     // 恢复之前的选择
@@ -906,7 +898,7 @@ function downloadMedia() {
     params.set('url', videoUrl);
     params.set('mode', mode);
     params.set('quality', quality);
-    if (subtitles) params.set('subtitles', subtitles);
+    if (subtitles) params.set('sub_langs', subtitles);
     const metaToggle = document.getElementById('metaToggle');
     if (metaToggle) {
         params.set('meta', metaToggle.checked ? '1' : '0');
@@ -932,7 +924,7 @@ function downloadMedia() {
     }
     const thumbnailToggle = document.getElementById('thumbnailToggle');
     if (thumbnailToggle && thumbnailToggle.checked) {
-        params.set('thumbnail', '1');
+        params.set('write_thumbnail', '1');
         addLog('启用封面图下载');
     }
     if (vfmt && afmt && qualityRaw !== 'best') {
@@ -943,6 +935,7 @@ function downloadMedia() {
 
     const sseUrl = `/api/stream_task?${params.toString()}`;
     downloadStartTime = Date.now();
+    currentTaskId = null;
     currentEventSource = new EventSource(sseUrl);
 
     currentEventSource.onmessage = (ev) => {
@@ -960,6 +953,10 @@ function downloadMedia() {
         if (data.task_id && !currentTaskId) {
             currentTaskId = data.task_id;
             addLog(`任务ID: ${currentTaskId}`);
+            // 任务已进入后台队列：按钮立即恢复，可以继续添加下一个
+            window.setDownloadBtnState('idle');
+            window.showToast('已加入下载队列', 'info');
+            if (window.refreshQueue) window.refreshQueue();
         }
         if (data.type === 'log') {
             addLog(data.line);
@@ -1010,7 +1007,6 @@ function downloadMedia() {
                 updateStageStatus('finished');
                 if (remainingTime) remainingTime.textContent = '00:00';
                 window.setDownloadBtnState('idle');
-                window.showToast('下载完成，文件已保存', 'success');
                 closeCurrentEventSource();
             } else if (data.status === 'error') {
                 addLog('任务失败', 'error');
@@ -1080,8 +1076,8 @@ function downloadSubtitles() {
     const params = new URLSearchParams();
     params.set('url', videoUrl);
     params.set('mode', 'merged');
-    params.set('subtitles', subtitles);
-    params.set('subtitles_only', 'true');
+    params.set('sub_langs', subtitles);
+    params.set('subtitles_only', '1');
     params.set('quality', 'best');
 
     const sseUrl = `/api/stream_task?${params.toString()}`;
