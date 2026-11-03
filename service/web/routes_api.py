@@ -419,7 +419,8 @@ def reveal_file():
         try:
             norm_target = os.path.normpath(target_path)
             creationflags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
-            subprocess.run(['explorer', f'/select,{norm_target}'], creationflags=creationflags)
+            # explorer 需要 /select,"路径" 这种写法；传列表会被整体加引号，路径含空格时 explorer 不认
+            subprocess.Popen(f'explorer /select,"{norm_target}"', creationflags=creationflags)
             return jsonify({'success': True})
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)})

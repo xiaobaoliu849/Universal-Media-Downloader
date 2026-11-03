@@ -1305,7 +1305,8 @@ def _execute_media_download(manager: Any, task: Task, base_template: str):
             task.log.append('[proxy] 代理已禁用（回退直连）')
 
         if forced_container and mode == 'audio_only':
-            a += ['--merge-output-format', forced_container]
+            # 新版 yt-dlp 的 --merge-output-format 不接受 m4a；用 -x 提取音频（AAC 源直接复制不重编码）
+            a += ['-x', '--audio-format', forced_container]
         if task.geo_bypass:
             a.append('--geo-bypass')
         if extra_args:
@@ -1796,12 +1797,24 @@ def _should_use_aria2c(manager: Any, url: str) -> bool:
     except Exception:
         return True
 
+# 下载中的临时文件（yt-dlp / aria2c 产生），不能当成成品
+_TEMP_SUFFIXES = ('.ytdl', '.part', '.aria2', '.temp', '.tmp')
+
+def _is_temp_file(fname: str) -> bool:
+    low = fname.lower()
+    return low.endswith(_TEMP_SUFFIXES) or re.search(r"\.part-frag\d+", low) is not None
+
 def _check_partial_success(manager: Any, task: Task, base_template: str):
     base_name_tmp = os.path.basename(base_template)
     for fname in os.listdir(manager.download_dir):
         if not fname.startswith(base_name_tmp + '.'): continue
         if re.search(r"\.f\d+\.", fname): continue
         if '%(ext)s' in fname: continue
+        if _is_temp_file(fname): continue
+        # 只认这个模式应有的成品，避免同名的视频任务被音频任务“认领”
+        ext = os.path.splitext(fname)[1].lower()
+        if task.mode == 'audio_only' and ext not in ('.m4a', '.mp3', '.opus', '.aac', '.ogg', '.wav', '.flac', '.webm'):
+            continue
         fullp = os.path.join(manager.download_dir, fname)
         if os.path.isfile(fullp) and os.path.getsize(fullp) > 100 * 1024:
             task.log.append('[partial-ok] 发现已生成合并文件且大小正常')
@@ -1818,6 +1831,8 @@ def _finalize_download(manager: Any, task: Task, base_template: str, mode: str):
     comp_re = re.compile(rf"^{re.escape(base_name)}\.f(\d+)\.")
     for fname in os.listdir(manager.download_dir):
         if not fname.startswith(base_name + '.') or '%(ext)s' in fname:
+            continue
+        if _is_temp_file(fname):
             continue
         fullp = os.path.join(manager.download_dir, fname)
         if comp_re.search(fname):
